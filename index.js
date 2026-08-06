@@ -19,6 +19,7 @@ const ACTIVE_POMODORO_ATTR = "custom-time-list-active-pomodoro";
 const SOURCE_ATTR = "custom-time-list-source";
 const SOURCE_DOC_ID_ATTR = "custom-time-list-source-doc-id";
 const SOURCE_KEY_ATTR = "custom-time-list-source-key";
+const TASK_UID_ATTR = "custom-time-list-task-uid";
 const PIE_COLORS = ["#5b8def", "#f59e0b", "#10b981", "#ef4444", "#8b5cf6", "#06b6d4", "#f97316", "#84cc16"];
 const WEEKDAY_SHORT = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
 const ICONS = `
@@ -49,6 +50,7 @@ const defaultSettings = {
   notebookId: "",
   autoAppendToDailyNote: true,
   habitDocId: "",
+  adjustTimelineOnVisibleTimeChange: true,
 };
 
 const defaultState = {
@@ -171,7 +173,7 @@ class TimeListPlugin extends Plugin {
     this.state = {
       ...clone(defaultState),
       ...(loadedState || {}),
-      tasks: Array.isArray(loadedState?.tasks) ? loadedState.tasks : [],
+      tasks: Array.isArray(loadedState?.tasks) ? loadedState.tasks.map(normalizeStoredTask) : [],
     };
   }
 
@@ -204,6 +206,10 @@ class TimeListPlugin extends Plugin {
     appendToggle.type = "checkbox";
     appendToggle.checked = this.settings.autoAppendToDailyNote;
 
+    const adjustTimelineToggle = document.createElement("input");
+    adjustTimelineToggle.type = "checkbox";
+    adjustTimelineToggle.checked = this.settings.adjustTimelineOnVisibleTimeChange;
+
     const habitDocInput = document.createElement("input");
     habitDocInput.className = "b3-text-field fn__flex-center fn__size200";
     habitDocInput.placeholder = "习惯文档 ID";
@@ -214,6 +220,7 @@ class TimeListPlugin extends Plugin {
         this.settings.notebookId = notebookSelect.value;
         this.resetDailyNoteCache();
         this.settings.autoAppendToDailyNote = appendToggle.checked;
+        this.settings.adjustTimelineOnVisibleTimeChange = adjustTimelineToggle.checked;
         this.settings.habitDocId = habitDocInput.value.trim();
         await this.saveSettings();
         await this.syncTodayFromDailyNote({ silent: true });
@@ -238,6 +245,12 @@ class TimeListPlugin extends Plugin {
       title: "习惯文档 ID",
       description: "点击刷新时读取这个文档里的每一行，创建为今日习惯任务。",
       createActionElement: () => habitDocInput,
+    });
+
+    this.setting.addItem({
+      title: "文档改时长时调整足迹",
+      description: "勾选后，手动修改文档里的总时长时，会尽量保留开始时间并自动调整结束时间。",
+      createActionElement: () => adjustTimelineToggle,
     });
 
   }
@@ -279,6 +292,11 @@ class TimeListPlugin extends Plugin {
           创建和完成任务时写入任务文档
         </label>
 
+        <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--b3-theme-on-surface);">
+          <input id="time-list-adjust-timeline" type="checkbox" ${this.settings.adjustTimelineOnVisibleTimeChange ? "checked" : ""} />
+          修改文档总时长时，自动调整足迹结束时间
+        </label>
+
         <div style="display: flex; flex-direction: column; gap: 4px;">
           <label style="font-size: 13px; font-weight: 500; color: var(--b3-theme-on-surface);">习惯文档 ID</label>
           <input id="time-list-habit-doc-id" class="b3-text-field" placeholder="粘贴习惯文档 ID" value="${escapeAttr(this.settings.habitDocId || "")}" style="width: 100%;" />
@@ -306,6 +324,7 @@ class TimeListPlugin extends Plugin {
     const root = this.settingDialog.element;
     const notebookSelect = root.querySelector("#time-list-notebook");
     const appendToggle = root.querySelector("#time-list-auto-append");
+    const adjustTimelineToggle = root.querySelector("#time-list-adjust-timeline");
     const habitDocInput = root.querySelector("#time-list-habit-doc-id");
     const statusElement = root.querySelector("#time-list-setting-status");
     const cancelButton = root.querySelector("#time-list-cancel-settings");
@@ -323,6 +342,7 @@ class TimeListPlugin extends Plugin {
         ...this.settings,
         notebookId: notebookSelect.value,
         autoAppendToDailyNote: appendToggle.checked,
+        adjustTimelineOnVisibleTimeChange: Boolean(adjustTimelineToggle?.checked),
         habitDocId: habitDocInput.value.trim(),
       };
       this.resetDailyNoteCache();
@@ -645,6 +665,7 @@ class TimeListPlugin extends Plugin {
     if (!this.canWriteDailyNote()) {
       return false;
     }
+    task.taskUid = String(task.taskUid || task.id || createId());
     this.lastDailyNoteWriteAt = Date.now();
     const markdown = formatDailyTaskRecord(task, status, {
       ...options,
@@ -692,6 +713,7 @@ class TimeListPlugin extends Plugin {
     if (!task?.blockId) {
       return;
     }
+    task.taskUid = String(task.taskUid || task.id || createId());
     await this.request("/api/attr/setBlockAttrs", {
       id: task.blockId,
       attrs: buildTimeListAttrs(task),
@@ -700,9 +722,14 @@ class TimeListPlugin extends Plugin {
 
   async findDailyTaskBlockId(task) {
     const rows = await this.queryDailyTaskBlocks(task.date || todayKey());
-    const records = parseDailyTaskRecordsFromRows(rows)
+    const records = parseDailyTaskRecordsFromRows(rows, this.getDocumentSyncOptions())
       .filter((record) => record.date === (task.date || todayKey()))
-      .filter((record) => normalizeTitleKey(record.title) === normalizeTitleKey(task.title))
+      .filter((record) => {
+        if (task.taskUid && record.taskUid) {
+          return task.taskUid === record.taskUid;
+        }
+        return normalizeTitleKey(record.title) === normalizeTitleKey(task.title);
+      })
       .filter((record) => record.blockId);
     return records.at(-1)?.blockId || "";
   }
@@ -766,6 +793,12 @@ class TimeListPlugin extends Plugin {
     return Array.isArray(rows) ? rows : [];
   }
 
+  getDocumentSyncOptions() {
+    return {
+      adjustTimelineOnVisibleTimeChange: this.settings.adjustTimelineOnVisibleTimeChange !== false,
+    };
+  }
+
   async syncTodayFromDailyNote({ silent = true } = {}) {
     if (!this.settings.notebookId) {
       return 0;
@@ -781,8 +814,11 @@ class TimeListPlugin extends Plugin {
       }
       return 0;
     }
-    const records = parseDailyTaskRecordsFromRows(rows).filter((record) => record.date === date);
-    const changed = this.mergeDailyTaskRecords(records, date);
+    const parsed = parseDailyTaskRows(rows, this.getDocumentSyncOptions());
+    const records = parsed.records.filter((record) => record.date === date);
+    const changed = this.mergeDailyTaskRecords(records, date, {
+      invalidBlockIds: parsed.invalidBlockIdsByDate.get(date) || new Set(),
+    });
     if (changed) {
       await this.saveState();
     }
@@ -814,8 +850,9 @@ class TimeListPlugin extends Plugin {
       return 0;
     }
 
+    const parsed = parseDailyTaskRows(rows, this.getDocumentSyncOptions());
     const recordsByDate = new Map();
-    parseDailyTaskRecordsFromRows(rows)
+    parsed.records
       .filter((record) => dateSet.has(record.date))
       .forEach((record) => {
         if (!recordsByDate.has(record.date)) {
@@ -829,7 +866,10 @@ class TimeListPlugin extends Plugin {
       if (!dailyNoteIds.has(date)) {
         continue;
       }
-      changed = this.mergeDailyTaskRecords(recordsByDate.get(date) || [], date, { removeMissing }) || changed;
+      changed = this.mergeDailyTaskRecords(recordsByDate.get(date) || [], date, {
+        removeMissing,
+        invalidBlockIds: parsed.invalidBlockIdsByDate.get(date) || new Set(),
+      }) || changed;
     }
     if (changed) {
       await this.saveState();
@@ -859,7 +899,7 @@ class TimeListPlugin extends Plugin {
     }
   }
 
-  mergeDailyTaskRecords(records, date, { removeMissing = true } = {}) {
+  mergeDailyTaskRecords(records, date, { removeMissing = true, invalidBlockIds = new Set() } = {}) {
     let changed = false;
     const now = Date.now();
     this.pruneRecentLocalTaskChanges(now);
@@ -871,17 +911,20 @@ class TimeListPlugin extends Plugin {
     const effectiveRecords = dedupeDailyTaskRecords(records.filter((record) => {
       return !record.blockId || !this.locallyDeletedBlockIds.has(record.blockId);
     }));
+    const byTaskUid = new Map(this.state.tasks.filter((task) => task.taskUid).map((task) => [task.taskUid, task]));
     const byBlockId = new Map(this.state.tasks.filter((task) => task.blockId).map((task) => [task.blockId, task]));
     const byKey = new Map(this.state.tasks.map((task) => [taskMergeKey(task, date), task]));
     const seenBlockIds = new Set(effectiveRecords.map((record) => record.blockId).filter(Boolean));
 
     effectiveRecords.forEach((record) => {
       const key = recordMergeKey(record);
-      let task = record.blockId ? byBlockId.get(record.blockId) : null;
+      let task = record.taskUid ? byTaskUid.get(record.taskUid) : null;
+      task = task || (record.blockId ? byBlockId.get(record.blockId) : null);
       task = task || byKey.get(key);
       if (!task) {
         task = {
           id: createId(),
+          taskUid: String(record.taskUid || createId()),
           title: record.title,
           date: record.date,
           status: record.status,
@@ -904,9 +947,19 @@ class TimeListPlugin extends Plugin {
         return;
       }
 
+      const normalizedTaskUid = String(task.taskUid || record.taskUid || task.id || createId());
+      if (task.taskUid !== normalizedTaskUid) {
+        task.taskUid = normalizedTaskUid;
+        changed = true;
+      }
+
       if (this.hasRecentLocalTaskChange(task, key)) {
         if (record.blockId && task.blockId !== record.blockId) {
           task.blockId = record.blockId;
+          changed = true;
+        }
+        if (record.taskUid && task.taskUid !== record.taskUid) {
+          task.taskUid = record.taskUid;
           changed = true;
         }
         return;
@@ -918,6 +971,7 @@ class TimeListPlugin extends Plugin {
         title: record.title,
         date: record.date,
         status: record.status,
+        taskUid: record.taskUid || task.taskUid || task.id,
         blockId: record.blockId || task.blockId || "",
         actualMinutes: record.actualMinutes,
         completedAt: record.status === "completed" ? (task.completedAt || new Date().toISOString()) : "",
@@ -951,7 +1005,7 @@ class TimeListPlugin extends Plugin {
     if (canRemoveMissingBlockTasks) {
       const before = this.state.tasks.length;
       this.state.tasks = this.state.tasks.filter((task) => {
-        return !(task.date === date && task.blockId && !seenBlockIds.has(task.blockId));
+        return !(task.date === date && task.blockId && !seenBlockIds.has(task.blockId) && !invalidBlockIds.has(task.blockId));
       });
       if (this.state.tasks.length !== before) {
         if (this.state.activePomodoro && !this.findTask(this.state.activePomodoro.taskId)) {
@@ -1032,7 +1086,7 @@ class TimeListPlugin extends Plugin {
     if (this.settings.notebookId) {
       try {
         const rows = await this.queryDailyTaskBlocks(date);
-        parseDailyTaskRecordsFromRows(rows)
+        parseDailyTaskRecordsFromRows(rows, this.getDocumentSyncOptions())
           .filter((record) => record.date === date)
           .forEach((record) => existingKeys.add(normalizeTitleKey(record.title)));
       } catch (error) {
@@ -1050,6 +1104,7 @@ class TimeListPlugin extends Plugin {
     const now = new Date().toISOString();
     const tasks = nextTitles.map((title) => ({
       id: createId(),
+      taskUid: createId(),
       title,
       date,
       status: "pending",
@@ -1147,6 +1202,7 @@ class TimeListPlugin extends Plugin {
     const now = new Date().toISOString();
     const tasks = titles.map((title) => ({
       id: createId(),
+      taskUid: createId(),
       title,
       date: todayKey(),
       status: "pending",
@@ -1649,6 +1705,9 @@ class TimeListPlugin extends Plugin {
   markRecentLocalTaskChange(task) {
     const changedAt = Date.now();
     this.recentLocalTaskChanges.set(task.id, changedAt);
+    if (task.taskUid) {
+      this.recentLocalTaskChanges.set(task.taskUid, changedAt);
+    }
     this.recentLocalTaskChanges.set(taskMergeKey(task), changedAt);
   }
 
@@ -1662,7 +1721,9 @@ class TimeListPlugin extends Plugin {
 
   hasRecentLocalTaskChange(task, recordKey) {
     this.pruneRecentLocalTaskChanges();
-    return this.recentLocalTaskChanges.has(task.id) || this.recentLocalTaskChanges.has(recordKey);
+    return this.recentLocalTaskChanges.has(task.id)
+      || (task.taskUid ? this.recentLocalTaskChanges.has(task.taskUid) : false)
+      || this.recentLocalTaskChanges.has(recordKey);
   }
 
   getTodayTasks() {
@@ -2375,6 +2436,16 @@ function clone(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
+function normalizeStoredTask(task = {}) {
+  const localId = String(task.id || createId());
+  const taskUid = String(task.taskUid || localId);
+  return {
+    ...task,
+    id: localId,
+    taskUid,
+  };
+}
+
 function todayKey() {
   const date = new Date();
   const year = date.getFullYear();
@@ -2497,6 +2568,7 @@ function buildTimeListAttrs(task) {
   const pomodoros = normalizePomodoros(task.pomodoros);
   const manualEntries = normalizeManualEntries(task.manualEntries);
   return {
+    [TASK_UID_ATTR]: task.taskUid ? JSON.stringify(String(task.taskUid)) : task.id ? JSON.stringify(String(task.id)) : "",
     [POMODOROS_ATTR]: pomodoros.length ? JSON.stringify(pomodoros) : "",
     [MANUAL_ENTRIES_ATTR]: manualEntries.length ? JSON.stringify(manualEntries) : "",
     [ACTIVE_POMODORO_ATTR]: "",
@@ -2511,10 +2583,18 @@ function normalizeTitleKey(title) {
 }
 
 function taskMergeKey(task, fallbackDate = todayKey()) {
+  const taskUid = String(task?.taskUid || "").trim();
+  if (taskUid) {
+    return `uid:${taskUid}`;
+  }
   return `${task.date || fallbackDate}|${normalizeTitleKey(task.title)}`;
 }
 
 function recordMergeKey(record) {
+  const taskUid = String(record?.taskUid || "").trim();
+  if (taskUid) {
+    return `uid:${taskUid}`;
+  }
   return `${record.date || todayKey()}|${normalizeTitleKey(record.title)}`;
 }
 
@@ -2548,27 +2628,46 @@ function compareDailyTaskRecord(left, right) {
   return left.blockId && !right.blockId ? 1 : 0;
 }
 
-function parseDailyTaskRecordsFromRows(rows) {
+function parseDailyTaskRows(rows, options = {}) {
   const records = [];
+  const invalidBlockIdsByDate = new Map();
   rows.forEach((row) => {
     const markdown = String(row.markdown || row.content || "");
     const parsedLines = markdown
       .split(/\n+/)
-      .map((line) => parseDailyTaskRecord(line, row))
+      .map((line) => parseDailyTaskRecord(line, row, options))
       .filter(Boolean);
-    parsedLines.forEach((record) => {
-      records.push({
-        ...record,
-        blockId: parsedLines.length === 1 ? row.id : "",
-        createdAt: row.created ? siyuanTimeToIso(row.created) : "",
-        updatedAt: row.updated ? siyuanTimeToIso(row.updated) : "",
+    if (parsedLines.length === 0) {
+      return;
+    }
+    if (parsedLines.length > 1) {
+      parsedLines.forEach((record) => {
+        const date = String(record.date || "").trim();
+        if (!date) {
+          return;
+        }
+        if (!invalidBlockIdsByDate.has(date)) {
+          invalidBlockIdsByDate.set(date, new Set());
+        }
+        invalidBlockIdsByDate.get(date).add(String(row.id || ""));
       });
+      return;
+    }
+    records.push({
+      ...parsedLines[0],
+      blockId: row.id || "",
+      createdAt: row.created ? siyuanTimeToIso(row.created) : "",
+      updatedAt: row.updated ? siyuanTimeToIso(row.updated) : "",
     });
   });
-  return records;
+  return { records, invalidBlockIdsByDate };
 }
 
-function parseDailyTaskRecord(line, row = {}) {
+function parseDailyTaskRecordsFromRows(rows, options = {}) {
+  return parseDailyTaskRows(rows, options).records;
+}
+
+function parseDailyTaskRecord(line, row = {}, options = {}) {
   const rawText = String(line || "").trim();
   const text = stripTimeListComments(rawText);
   const dateMatch = /(?:\uD83D\uDCC5\s*)?(\d{4}-\d{2}-\d{2})/.exec(text);
@@ -2582,8 +2681,10 @@ function parseDailyTaskRecord(line, row = {}) {
   const status = /✅|✔️|☑️/.test(text) ? "completed" : /🚫|❌/.test(text) ? "abandoned" : "pending";
   const summaryMatch = /📝\s*(.+)$/.exec(text);
   const actualMinutes = status === "completed" ? parseTaskMinutes(text) : 0;
+  const taskUid = String(parseTimeListAttr(row, TASK_UID_ATTR) || "").trim();
   const source = normalizeTaskSource(parseTimeListAttr(row, SOURCE_ATTR) || parseTimeListComment(rawText, "source"));
   return {
+    taskUid,
     title,
     date: dateMatch[1],
     status,
@@ -2592,8 +2693,8 @@ function parseDailyTaskRecord(line, row = {}) {
     sourceKey: source ? String(parseTimeListAttr(row, SOURCE_KEY_ATTR) || parseTimeListComment(rawText, "source-key") || "") : "",
     blockId: row.id || "",
     actualMinutes,
-    pomodoros: parsePomodoros(rawText, text, row),
-    manualEntries: parseManualEntries(rawText, text, row),
+    pomodoros: parsePomodoros(rawText, text, row, options),
+    manualEntries: parseManualEntries(rawText, text, row, options),
     activePomodoro: null,
     summary: summaryMatch ? unescapeMarkdown(summaryMatch[1].trim()) : "",
   };
@@ -2650,6 +2751,7 @@ function buildDailyTaskBlockSelect(tableName = "blocks") {
     `${table}.ial`,
     `${table}.created`,
     `${table}.updated`,
+    buildBlockAttrSelect(table, TASK_UID_ATTR),
     buildBlockAttrSelect(table, POMODOROS_ATTR),
     buildBlockAttrSelect(table, MANUAL_ENTRIES_ATTR),
     buildBlockAttrSelect(table, ACTIVE_POMODORO_ATTR),
@@ -2663,7 +2765,7 @@ function buildBlockAttrSelect(tableName, attrName) {
   return `(select value from attributes where block_id = ${tableName}.id and name = '${escapeSql(attrName)}' limit 1) as "${attrName}"`;
 }
 
-function parsePomodoros(rawText, visibleText, row = {}) {
+function parsePomodoros(rawText, visibleText, row = {}, options = {}) {
   const visibleMinutes = parsePomodoroMinutes(visibleText);
   if (visibleMinutes <= 0) {
     return [];
@@ -2671,7 +2773,7 @@ function parsePomodoros(rawText, visibleText, row = {}) {
   const parsed = parseTimeListAttr(row, POMODOROS_ATTR) || parseTimeListComment(rawText, "pomodoros");
   const pomodoros = normalizePomodoros(parsed);
   if (pomodoros.length > 0) {
-    return reconcilePomodoroDetailsWithVisibleMinutes(pomodoros, visibleMinutes);
+    return reconcilePomodoroDetailsWithVisibleMinutes(pomodoros, visibleMinutes, options);
   }
   const referenceTime = getRowReferenceTimestamp(row);
   return [{
@@ -2682,7 +2784,7 @@ function parsePomodoros(rawText, visibleText, row = {}) {
   }];
 }
 
-function parseManualEntries(rawText, visibleText, row = {}) {
+function parseManualEntries(rawText, visibleText, row = {}, options = {}) {
   const visibleMinutes = parseManualMinutes(visibleText);
   if (visibleMinutes <= 0) {
     return [];
@@ -2690,7 +2792,7 @@ function parseManualEntries(rawText, visibleText, row = {}) {
   const parsed = parseTimeListAttr(row, MANUAL_ENTRIES_ATTR) || parseTimeListComment(rawText, "manual-entries");
   const manualEntries = normalizeManualEntries(parsed);
   if (manualEntries.length > 0) {
-    return reconcileManualDetailsWithVisibleMinutes(manualEntries, visibleMinutes);
+    return reconcileManualDetailsWithVisibleMinutes(manualEntries, visibleMinutes, options);
   }
   const referenceTime = getRowReferenceTimestamp(row);
   return [{
@@ -3158,7 +3260,7 @@ function totalPomodoroItemMinutes(pomodoros) {
   return normalizePomodoros(pomodoros).reduce((sum, item) => sum + item.minutes, 0);
 }
 
-function reconcilePomodoroDetailsWithVisibleMinutes(pomodoros, visibleMinutes) {
+function reconcilePomodoroDetailsWithVisibleMinutes(pomodoros, visibleMinutes, options = {}) {
   const detailItems = normalizePomodoros(pomodoros).filter((item) => !isAggregatePomodoro(item));
   if (detailItems.length === 0) {
     const referenceTime = getLatestPomodoroTimestamp(pomodoros);
@@ -3168,6 +3270,9 @@ function reconcilePomodoroDetailsWithVisibleMinutes(pomodoros, visibleMinutes) {
       endedAt: referenceTime ? new Date(referenceTime).toISOString() : "",
       minutes: visibleMinutes,
     }];
+  }
+  if (options.adjustTimelineOnVisibleTimeChange === false) {
+    return detailItems;
   }
   return fitTimedEntriesToVisibleMinutes(detailItems, visibleMinutes);
 }
@@ -3216,7 +3321,7 @@ function mergeManualEntries(existing, incoming) {
   });
 }
 
-function reconcileManualDetailsWithVisibleMinutes(entries, visibleMinutes) {
+function reconcileManualDetailsWithVisibleMinutes(entries, visibleMinutes, options = {}) {
   const detailItems = normalizeManualEntries(entries).filter((item) => !isAggregateManualEntry(item));
   if (detailItems.length === 0) {
     const referenceTime = getLatestManualTimestamp(entries);
@@ -3226,6 +3331,9 @@ function reconcileManualDetailsWithVisibleMinutes(entries, visibleMinutes) {
       recordedAt: referenceTime ? new Date(referenceTime).toISOString() : "",
       note: "",
     }];
+  }
+  if (options.adjustTimelineOnVisibleTimeChange === false) {
+    return detailItems;
   }
   return fitTimedEntriesToVisibleMinutes(detailItems, visibleMinutes);
 }
