@@ -2678,9 +2678,21 @@ function parsePomodoros(rawText, visibleText, row = {}) {
 }
 
 function parseManualEntries(rawText, visibleText, row = {}) {
+  const visibleMinutes = parseManualMinutes(visibleText);
+  if (visibleMinutes <= 0) {
+    return [];
+  }
   const parsed = parseTimeListAttr(row, MANUAL_ENTRIES_ATTR) || parseTimeListComment(rawText, "manual-entries");
   const manualEntries = normalizeManualEntries(parsed);
-  return manualEntries;
+  if (manualEntries.length > 0 && totalManualEntryMinutes(manualEntries) === visibleMinutes) {
+    return manualEntries;
+  }
+  return [{
+    id: `daily-manual-aggregate-${visibleMinutes}`,
+    minutes: visibleMinutes,
+    recordedAt: "",
+    note: "",
+  }];
 }
 
 function parseActivePomodoro(rawText, visibleText, row = {}) {
@@ -3160,15 +3172,26 @@ function normalizeManualEntries(entries) {
 }
 
 function mergeManualEntries(existing, incoming) {
+  const incomingItems = normalizeManualEntries(incoming);
+  const incomingDetails = incomingItems.filter((item) => !isAggregateManualEntry(item));
+  const aggregates = incomingItems.filter(isAggregateManualEntry);
   const byKey = new Map();
-  [...normalizeManualEntries(existing), ...normalizeManualEntries(incoming)].forEach((item) => {
+  incomingDetails.forEach((item) => {
     byKey.set(item.id || `${item.recordedAt}-${item.minutes}`, item);
   });
+  if (byKey.size === 0 && aggregates.length > 0) {
+    const aggregate = aggregates.reduce((left, right) => left.minutes >= right.minutes ? left : right);
+    byKey.set(aggregate.id || `daily-manual-aggregate-${aggregate.minutes}`, aggregate);
+  }
   return Array.from(byKey.values()).sort((left, right) => {
     const leftTime = Date.parse(left.recordedAt || "") || 0;
     const rightTime = Date.parse(right.recordedAt || "") || 0;
     return leftTime - rightTime;
   });
+}
+
+function isAggregateManualEntry(item) {
+  return String(item?.id || "").startsWith("daily-manual-aggregate-");
 }
 
 function isAggregatePomodoro(item) {
