@@ -14,6 +14,7 @@ const SETTINGS_KEY = "time-list-settings.json";
 const DOCK_TYPE = "time-list";
 const DOCUMENT_SAVE_SYNC_DELAY_MS = 900;
 const POMODOROS_ATTR = "custom-time-list-pomodoros";
+const MANUAL_ENTRIES_ATTR = "custom-time-list-manual-entries";
 const ACTIVE_POMODORO_ATTR = "custom-time-list-active-pomodoro";
 const SOURCE_ATTR = "custom-time-list-source";
 const SOURCE_DOC_ID_ATTR = "custom-time-list-source-doc-id";
@@ -66,9 +67,11 @@ class TimeListPlugin extends Plugin {
     this.createTaskDialog = null;
     this.completeTaskDialog = null;
     this.calendarDialog = null;
+    this.topBarElement = null;
     this.currentDockView = "tasks";
     this.calendarMode = "week";
     this.calendarDate = todayKey();
+    this.calendarFocusDate = todayKey();
     this.timerHandle = null;
     this.documentSyncTimer = null;
     this.boundWsMainHandler = null;
@@ -106,6 +109,7 @@ class TimeListPlugin extends Plugin {
   async onLayoutReady() {
     try {
       await this.loadAllData();
+      this.registerTopBar();
       this.registerDock();
       await this.setupSettings();
       await this.syncTodayFromDailyNote({ silent: true });
@@ -120,6 +124,8 @@ class TimeListPlugin extends Plugin {
   onunload() {
     this.stopTicker();
     this.stopDocumentSync();
+    this.topBarElement?.remove?.();
+    this.topBarElement = null;
     if (this.boundWsMainHandler) {
       this.eventBus.off("ws-main", this.boundWsMainHandler);
       this.boundWsMainHandler = null;
@@ -354,6 +360,23 @@ class TimeListPlugin extends Plugin {
         this.element.innerHTML = "";
       },
     });
+  }
+
+  registerTopBar() {
+    if (this.topBarElement?.isConnected) {
+      return;
+    }
+    try {
+      this.topBarElement?.remove?.();
+      this.topBarElement = this.addTopBar({
+        icon: "iconTimeList",
+        title: "日记任务计时",
+        position: "right",
+        callback: () => this.openDock(),
+      });
+    } catch (error) {
+      console.warn("[siyuan-time-list] failed to add top bar", error);
+    }
   }
 
   openDock() {
@@ -872,6 +895,7 @@ class TimeListPlugin extends Plugin {
           actualMinutes: record.actualMinutes,
           completionMode: record.status === "completed" ? "document" : "",
           pomodoros: normalizePomodoros(record.pomodoros),
+          manualEntries: normalizeManualEntries(record.manualEntries),
           note: record.status === "completed" ? "文档同步" : "",
           summary: record.summary,
         };
@@ -889,6 +913,7 @@ class TimeListPlugin extends Plugin {
       }
 
       const mergedPomodoros = mergePomodoros(task.pomodoros, record.pomodoros);
+      const mergedManualEntries = mergeManualEntries(task.manualEntries, record.manualEntries);
       const nextValues = {
         title: record.title,
         date: record.date,
@@ -914,6 +939,10 @@ class TimeListPlugin extends Plugin {
       });
       if (pomodoroSignature(task.pomodoros) !== pomodoroSignature(mergedPomodoros)) {
         task.pomodoros = mergedPomodoros;
+        changed = true;
+      }
+      if (manualEntrySignature(task.manualEntries) !== manualEntrySignature(mergedManualEntries)) {
+        task.manualEntries = mergedManualEntries;
         changed = true;
       }
     });
@@ -1032,6 +1061,7 @@ class TimeListPlugin extends Plugin {
       actualMinutes: 0,
       completionMode: "",
       pomodoros: [],
+      manualEntries: [],
       note: "",
       summary: "",
     }));
@@ -1125,6 +1155,7 @@ class TimeListPlugin extends Plugin {
       actualMinutes: 0,
       completionMode: "",
       pomodoros: [],
+      manualEntries: [],
       note: "",
       summary: "",
     }));
@@ -1199,29 +1230,144 @@ class TimeListPlugin extends Plugin {
     setTimeout(() => titlesInput.focus(), 0);
   }
 
-  async completeTask(taskId, mode, payload) {
+  async appendManualTime(taskId, payload = {}) {
+    const task = this.findTask(taskId);
+    if (!task) {
+      return false;
+    }
+
+    const minutes = clampNumber(payload.minutes, 0, 24 * 60, 0);
+    if (minutes <= 0) {
+      showMessage("追加时长需要大于 0 分钟。", 3000, "error");
+      return false;
+    }
+
+    task.manualEntries = normalizeManualEntries([...(task.manualEntries || []), {
+      id: createId(),
+      minutes,
+      recordedAt: new Date().toISOString(),
+      note: String(payload.note || "").trim(),
+    }]);
+
+    if (task.status === "completed") {
+      task.actualMinutes = this.getTaskRecordedMinutes(task);
+    }
+
+    this.markRecentLocalTaskChange(task);
+    await this.saveState();
+    this.render();
+
+    try {
+      const changed = await this.writeTaskToDailyNote(task, normalizeTaskStatus(task));
+      if (changed) {
+        await this.saveState();
+      }
+      this.render();
+      showMessage(`已追加 ${formatMinutes(minutes)}。`);
+      return true;
+    } catch (error) {
+      showMessage(`时长已本地追加，但同步日记失败：${error.message}`, 5000, "error");
+      return false;
+    }
+  }
+
+  openAppendManualTimeDialog(taskId) {
     const task = this.findTask(taskId);
     if (!task) {
       return;
     }
 
-    const minutes = this.resolveCompletionMinutes(task, mode, payload);
-    if (minutes <= 0) {
-      showMessage("完成时长需要大于 0 分钟。", 3000, "error");
-      return;
+    if (this.completeTaskDialog) {
+      this.completeTaskDialog.destroy();
+      this.completeTaskDialog = null;
+    }
+
+    const content = `
+      <div class="time-list-dialog">
+        <div class="time-list-dialog-title">${escapeHtml(task.title)}</div>
+        <div class="time-list-dialog-hint">
+          当前累计 ${formatMinutes(this.getTaskRecordedMinutes(task))} · 手动 ${formatMinutes(this.getTaskManualMinutes(task))} · 番茄 ${formatMinutes(this.getTaskPomodoroMinutes(task))}
+        </div>
+
+        <label class="time-list-field">
+          <span>本次追加时长（分钟）</span>
+          <input id="time-list-append-minutes" class="b3-text-field" type="number" min="1" placeholder="例如：25" />
+        </label>
+
+        <label class="time-list-field">
+          <span>备注（可选）</span>
+          <input id="time-list-append-note" class="b3-text-field" type="text" placeholder="例如：会议 / 复盘 / 补记" />
+        </label>
+
+        <div class="time-list-dialog-footer">
+          <button id="time-list-append-cancel" class="b3-button b3-button--outline">取消</button>
+          <button id="time-list-append-submit" class="b3-button b3-button--text">追加时长</button>
+        </div>
+      </div>
+    `;
+
+    this.completeTaskDialog = new Dialog({
+      title: "追加时长",
+      content,
+      width: this.isMobile ? "92vw" : "480px",
+      height: "auto",
+      destroyCallback: () => {
+        this.completeTaskDialog = null;
+      },
+    });
+
+    const root = this.completeTaskDialog.element;
+    const minutesInput = root.querySelector("#time-list-append-minutes");
+    const noteInput = root.querySelector("#time-list-append-note");
+    const submitButton = root.querySelector("#time-list-append-submit");
+    const cancelButton = root.querySelector("#time-list-append-cancel");
+    const updatePreview = () => {
+      submitButton.disabled = clampNumber(minutesInput?.value, 0, 24 * 60, 0) <= 0;
+    };
+
+    minutesInput?.addEventListener("input", updatePreview);
+    minutesInput?.addEventListener("change", updatePreview);
+    cancelButton?.addEventListener("click", () => this.completeTaskDialog?.destroy());
+    submitButton?.addEventListener("click", async () => {
+      submitButton.disabled = true;
+      const success = await this.appendManualTime(taskId, {
+        minutes: minutesInput?.value || "",
+        note: noteInput?.value || "",
+      });
+      if (success) {
+        this.completeTaskDialog?.destroy();
+      } else {
+        updatePreview();
+      }
+    });
+
+    updatePreview();
+    setTimeout(() => minutesInput?.focus(), 0);
+  }
+
+  async finishTask(taskId, payload = {}) {
+    const task = this.findTask(taskId);
+    if (!task) {
+      return false;
     }
 
     if (this.state.activePomodoro?.taskId === task.id) {
-      await this.stopPomodoro(false);
+      await this.stopPomodoro(true);
+    }
+
+    const minutes = this.getTaskRecordedMinutes(task);
+    if (minutes <= 0) {
+      showMessage("先追加一些时长，再结束任务。", 3000, "error");
+      return false;
     }
 
     task.status = "completed";
     task.actualMinutes = minutes;
-    task.completionMode = mode;
+    task.completionMode = "accumulated";
     task.completedAt = new Date().toISOString();
     task.abandonedAt = "";
-    task.note = this.buildCompletionNote(mode, payload, minutes);
-    task.summary = String(payload?.summary || "").trim();
+    task.note = this.buildCompletionNote(task, minutes);
+    task.summary = String(payload.summary || "").trim();
 
     this.markRecentLocalTaskChange(task);
     await this.saveState();
@@ -1233,13 +1379,15 @@ class TimeListPlugin extends Plugin {
         await this.saveState();
       }
       this.render();
-      showMessage("任务完成，时间也被好好收进篮子里了。");
+      showMessage("任务已结束，总时长已经汇总好了。");
+      return true;
     } catch (error) {
-      showMessage(`任务已完成，但写入日记失败：${error.message}`, 5000, "error");
+      showMessage(`任务已结束，但写入日记失败：${error.message}`, 5000, "error");
+      return false;
     }
   }
 
-  openCompleteTaskDialog(taskId) {
+  openFinishTaskDialog(taskId) {
     const task = this.findTask(taskId);
     if (!task) {
       return;
@@ -1250,56 +1398,37 @@ class TimeListPlugin extends Plugin {
       this.completeTaskDialog = null;
     }
 
+    const totalMinutes = this.getTaskRecordedMinutes(task);
+    const manualMinutes = this.getTaskManualMinutes(task);
     const pomodoroMinutes = this.getTaskPomodoroMinutes(task);
+    const recordCount = normalizeManualEntries(task.manualEntries).length + normalizePomodoros(task.pomodoros).length + (this.getTaskActivePomodoro(task) ? 1 : 0);
     const content = `
-      <div class="time-list-dialog time-list-complete-dialog" data-selected-mode="manual">
+      <div class="time-list-dialog">
         <div class="time-list-dialog-title">${escapeHtml(task.title)}</div>
+        <div class="time-list-pomodoro-total">
+          <span>结束后将汇总所有记录</span>
+          <strong>${formatMinutes(totalMinutes)}</strong>
+        </div>
         <div class="time-list-dialog-hint">
-          番茄累计 ${formatMinutes(pomodoroMinutes)} · ${(task.pomodoros || []).length} 次专注
-        </div>
-
-        <div class="time-list-choice-grid time-list-choice-grid--two">
-          <button class="time-list-choice-card is-active" data-action="dialog-mode" data-mode="manual">
-            <strong>直接填</strong>
-            <span>输入总分钟数</span>
-          </button>
-          <button class="time-list-choice-card" data-action="dialog-mode" data-mode="pomodoro">
-            <strong>番茄总和</strong>
-            <span>使用累计专注</span>
-          </button>
-        </div>
-
-        <div class="time-list-dialog-mode" data-role="dialog-mode-body" data-mode="manual">
-          <label class="time-list-field">
-            <span>实际用时（分钟）</span>
-            <input id="time-list-complete-minutes" class="b3-text-field" type="number" min="1" placeholder="例如：35" />
-          </label>
-        </div>
-
-        <div class="time-list-dialog-mode time-list-hidden" data-role="dialog-mode-body" data-mode="pomodoro">
-          <div class="time-list-pomodoro-total">
-            <span>将使用番茄累计</span>
-            <strong>${formatMinutes(pomodoroMinutes)}</strong>
-          </div>
-          <div class="time-list-dialog-hint">${pomodoroMinutes ? "将把番茄总和作为任务用时。" : "这个任务还没有番茄记录。"}</div>
+          共 ${recordCount} 次记录 · 手动 ${formatMinutes(manualMinutes)} · 番茄 ${formatMinutes(pomodoroMinutes)}
         </div>
 
         <label class="time-list-field">
           <span>任务总结（可选）</span>
-          <textarea id="time-list-complete-summary" class="b3-text-field time-list-summary-textarea" placeholder="简单写一下完成情况"></textarea>
+          <textarea id="time-list-finish-summary" class="b3-text-field time-list-summary-textarea" placeholder="简单写一下今天这件事的收尾情况"></textarea>
         </label>
 
         <div class="time-list-dialog-footer">
-          <button id="time-list-complete-cancel" class="b3-button b3-button--outline">取消</button>
-          <button id="time-list-complete-submit" class="b3-button b3-button--text">确认完成</button>
+          <button id="time-list-finish-cancel" class="b3-button b3-button--outline">取消</button>
+          <button id="time-list-finish-submit" class="b3-button b3-button--text">结束任务</button>
         </div>
       </div>
     `;
 
     this.completeTaskDialog = new Dialog({
-      title: "完成任务",
+      title: "结束任务",
       content,
-      width: this.isMobile ? "92vw" : "560px",
+      width: this.isMobile ? "92vw" : "520px",
       height: "auto",
       destroyCallback: () => {
         this.completeTaskDialog = null;
@@ -1307,70 +1436,29 @@ class TimeListPlugin extends Plugin {
     });
 
     const root = this.completeTaskDialog.element;
-    const container = root.querySelector(".time-list-complete-dialog");
-    const submitButton = root.querySelector("#time-list-complete-submit");
-    const cancelButton = root.querySelector("#time-list-complete-cancel");
-    const minutesInput = root.querySelector("#time-list-complete-minutes");
-    const summaryInput = root.querySelector("#time-list-complete-summary");
+    const summaryInput = root.querySelector("#time-list-finish-summary");
+    const submitButton = root.querySelector("#time-list-finish-submit");
+    const cancelButton = root.querySelector("#time-list-finish-cancel");
 
-    const getMode = () => container.dataset.selectedMode || "manual";
-    const getPayload = () => ({
-      minutes: minutesInput?.value || "",
-      summary: summaryInput?.value || "",
-    });
-    const updatePreview = () => {
-      const mode = getMode();
-      const minutes = this.resolveCompletionMinutes(task, mode, getPayload());
-      submitButton.disabled = minutes <= 0;
-    };
-    const setMode = (mode) => {
-      container.dataset.selectedMode = mode;
-      root.querySelectorAll("[data-action='dialog-mode']").forEach((button) => {
-        button.classList.toggle("is-active", button.dataset.mode === mode);
-      });
-      root.querySelectorAll("[data-role='dialog-mode-body']").forEach((body) => {
-        body.classList.toggle("time-list-hidden", body.dataset.mode !== mode);
-      });
-      updatePreview();
-    };
-
-    root.querySelectorAll("[data-action='dialog-mode']").forEach((button) => {
-      button.addEventListener("click", () => setMode(button.dataset.mode));
-    });
-    [minutesInput].forEach((input) => {
-      input?.addEventListener("input", updatePreview);
-      input?.addEventListener("change", updatePreview);
-    });
-    cancelButton.addEventListener("click", () => this.completeTaskDialog?.destroy());
-    submitButton.addEventListener("click", async () => {
-      const mode = getMode();
+    submitButton.disabled = totalMinutes <= 0;
+    cancelButton?.addEventListener("click", () => this.completeTaskDialog?.destroy());
+    submitButton?.addEventListener("click", async () => {
       submitButton.disabled = true;
-      await this.completeTask(taskId, mode, getPayload());
-      this.completeTaskDialog?.destroy();
+      const success = await this.finishTask(taskId, {
+        summary: summaryInput?.value || "",
+      });
+      if (success) {
+        this.completeTaskDialog?.destroy();
+      } else {
+        submitButton.disabled = totalMinutes <= 0;
+      }
     });
 
-    updatePreview();
-    setTimeout(() => minutesInput?.focus(), 0);
+    setTimeout(() => summaryInput?.focus(), 0);
   }
 
-  resolveCompletionMinutes(task, mode, payload) {
-    if (mode === "manual") {
-      return clampNumber(payload.minutes, 0, 24 * 60, 0);
-    }
-    if (mode === "pomodoro") {
-      return this.getTaskPomodoroMinutes(task);
-    }
-    return 0;
-  }
-
-  buildCompletionNote(mode, payload, minutes) {
-    if (mode === "manual") {
-      return "手动填写";
-    }
-    if (mode === "pomodoro") {
-      return `番茄累计 ${formatMinutes(minutes)}`;
-    }
-    return "";
+  buildCompletionNote(task, minutes) {
+    return `累计 ${formatMinutes(minutes)} · 手动 ${formatMinutes(this.getTaskManualMinutes(task))} · 番茄 ${formatMinutes(totalPomodoroMinutes(task))}`;
   }
 
   async reopenTask(taskId) {
@@ -1528,8 +1616,16 @@ class TimeListPlugin extends Plugin {
     return active;
   }
 
+  getTaskManualMinutes(task) {
+    return totalManualEntryMinutes(task?.manualEntries);
+  }
+
   getTaskPomodoroMinutes(task) {
     return totalPomodoroMinutes(task) + activePomodoroMinutes(this.getTaskActivePomodoro(task));
+  }
+
+  getTaskRecordedMinutes(task) {
+    return this.getTaskManualMinutes(task) + this.getTaskPomodoroMinutes(task);
   }
 
   async persistPomodoroTask(task, { silent = false } = {}) {
@@ -1582,6 +1678,8 @@ class TimeListPlugin extends Plugin {
         status: normalizeTaskStatus(task),
         actualMinutes: task.actualMinutes || 0,
         pomodoroMinutes: totalPomodoroMinutes(task),
+        manualEntryMinutes: totalManualEntryMinutes(task.manualEntries),
+        manualEntries: manualEntrySignature(task.manualEntries),
         activePomodoro: activePomodoroSignature(this.getTaskActivePomodoro(task)),
         summary: task.summary || "",
         blockId: task.blockId || "",
@@ -1684,6 +1782,7 @@ class TimeListPlugin extends Plugin {
     if (this.calendarMode === "week") {
       this.calendarDate = todayKey();
     }
+    this.calendarFocusDate = this.resolveCalendarFocusDate();
 
     this.calendarDialog = new Dialog({
       title: "任务日历",
@@ -1711,6 +1810,7 @@ class TimeListPlugin extends Plugin {
     if (!root) {
       return;
     }
+    this.calendarFocusDate = this.resolveCalendarFocusDate();
     root.innerHTML = this.renderCalendarView();
     this.bindCalendarEvents(root);
   }
@@ -1734,19 +1834,23 @@ class TimeListPlugin extends Plugin {
 
   renderCalendarView() {
     const tasks = this.getCalendarTasks();
+    const focusDate = this.resolveCalendarFocusDate();
 
     return `
       <div class="time-list-calendar">
         ${this.renderCalendarToolbar()}
       </div>
-      <div class="time-list-calendar-stage">
-        ${
-          this.calendarMode === "month"
-            ? this.renderCalendarMonthView(tasks)
-            : this.calendarMode === "year"
-              ? this.renderCalendarYearView(tasks)
-              : this.renderCalendarWeekView(tasks)
-        }
+      <div class="time-list-calendar-layout ${this.calendarMode === "year" ? "is-year" : ""}">
+        <div class="time-list-calendar-stage">
+          ${
+            this.calendarMode === "month"
+              ? this.renderCalendarMonthView(tasks, focusDate)
+              : this.calendarMode === "year"
+                ? this.renderCalendarYearView(tasks)
+                : this.renderCalendarWeekView(tasks, focusDate)
+          }
+        </div>
+        ${this.calendarMode === "year" ? "" : this.renderCalendarDayDetail(tasks, focusDate)}
       </div>
     `;
   }
@@ -1770,7 +1874,52 @@ class TimeListPlugin extends Plugin {
     `;
   }
 
-  renderCalendarWeekView(tasks) {
+  resolveCalendarFocusDate() {
+    const visibleDates = getCalendarVisibleDates(this.calendarDate, this.calendarMode);
+    if (visibleDates.includes(this.calendarFocusDate)) {
+      return this.calendarFocusDate;
+    }
+    if (visibleDates.includes(todayKey())) {
+      return todayKey();
+    }
+    if (visibleDates.includes(this.calendarDate)) {
+      return this.calendarDate;
+    }
+    return visibleDates[0] || this.calendarDate || todayKey();
+  }
+
+  getTaskCalendarMinutes(task) {
+    const status = normalizeTaskStatus(task);
+    const recordedMinutes = this.getTaskRecordedMinutes(task);
+    if (status === "completed") {
+      return Number(task.actualMinutes) || recordedMinutes;
+    }
+    return recordedMinutes;
+  }
+
+  getTaskCalendarBadges(task) {
+    const badges = [];
+    const status = normalizeTaskStatus(task);
+    const actualMinutes = Number(task.actualMinutes) || 0;
+    const manualMinutes = this.getTaskManualMinutes(task);
+    const pomodoroMinutes = this.getTaskPomodoroMinutes(task);
+
+    if (status === "completed" && actualMinutes > 0) {
+      badges.push(`⏱ ${formatCompactMinutes(actualMinutes)}`);
+    }
+    if (manualMinutes > 0) {
+      badges.push(`✍ ${formatCompactMinutes(manualMinutes)}`);
+    }
+    if (pomodoroMinutes > 0 && (status !== "completed" || pomodoroMinutes !== actualMinutes)) {
+      badges.push(`🍅 ${formatCompactMinutes(pomodoroMinutes)}`);
+    }
+    if (badges.length === 0) {
+      badges.push(status === "completed" ? "已完成" : status === "abandoned" ? "已放弃" : "未记录");
+    }
+    return badges;
+  }
+
+  renderCalendarWeekView(tasks, focusDate) {
     const dates = getWeekDates(this.calendarDate);
     const weekLabel = `第${getIsoWeekNumber(parseDateKey(this.calendarDate))}周`;
     return `
@@ -1780,7 +1929,11 @@ class TimeListPlugin extends Plugin {
           ${dates.map((date) => `<div class="time-list-calendar-week-head">${formatMonthDayWeek(date)}</div>`).join("")}
           <div class="time-list-calendar-all-day">全天</div>
           ${dates.map((date) => `
-            <div class="time-list-calendar-day-cell ${date === todayKey() ? "is-today" : ""}">
+            <div
+              class="time-list-calendar-day-cell ${date === todayKey() ? "is-today" : ""} ${date === focusDate ? "is-selected" : ""}"
+              data-action="calendar-focus-date"
+              data-date="${date}"
+            >
               ${this.renderCalendarEventsForDate(date, tasks)}
             </div>
           `).join("")}
@@ -1789,14 +1942,18 @@ class TimeListPlugin extends Plugin {
     `;
   }
 
-  renderCalendarMonthView(tasks) {
+  renderCalendarMonthView(tasks, focusDate) {
     const dates = getMonthGridDates(this.calendarDate);
     return `
       <div class="time-list-calendar-grid-wrap">
         <div class="time-list-calendar-month-grid">
           ${WEEKDAY_SHORT.map((day) => `<div class="time-list-calendar-month-head">${day}</div>`).join("")}
           ${dates.map((date, index) => `
-            <div class="time-list-calendar-month-cell ${date.slice(0, 7) !== this.calendarDate.slice(0, 7) ? "is-outside" : ""} ${date === todayKey() ? "is-today" : ""}">
+            <div
+              class="time-list-calendar-month-cell ${date.slice(0, 7) !== this.calendarDate.slice(0, 7) ? "is-outside" : ""} ${date === todayKey() ? "is-today" : ""} ${date === focusDate ? "is-selected" : ""}"
+              data-action="calendar-focus-date"
+              data-date="${date}"
+            >
               ${index % 7 === 0 ? `<span class="time-list-calendar-week-badge">第${getIsoWeekNumber(parseDateKey(date))}周</span>` : ""}
               <div class="time-list-calendar-date-num">${Number(date.slice(8))}日</div>
               ${this.renderCalendarEventsForDate(date, tasks)}
@@ -1830,14 +1987,155 @@ class TimeListPlugin extends Plugin {
 
   renderCalendarEventsForDate(date, tasks) {
     const dateTasks = sortTasksForDisplay(tasks.filter((task) => task.date === date));
-    return dateTasks.map((task) => this.renderCalendarEvent(task)).join("");
+    return `
+      ${this.renderCalendarDaySummary(dateTasks)}
+      ${dateTasks.map((task) => this.renderCalendarEvent(task)).join("")}
+    `;
   }
 
   renderCalendarEvent(task) {
     const status = normalizeTaskStatus(task);
+    const badges = this.getTaskCalendarBadges(task);
+    const timeText = badges.join(" · ");
     return `
       <div class="time-list-calendar-event time-list-calendar-event--${status}" title="${escapeAttr(task.title)}">
-        <strong>${taskCalendarMark(status)} ${escapeHtml(task.title)}</strong>
+        <div class="time-list-calendar-event-row">
+          <strong>${taskCalendarMark(status)} ${escapeHtml(task.title)}</strong>
+          <span class="time-list-calendar-event-time">${escapeHtml(timeText)}</span>
+        </div>
+      </div>
+    `;
+  }
+
+  renderCalendarDaySummary(tasks) {
+    if (!tasks.length) {
+      return "";
+    }
+    const totalMinutes = tasks.reduce((sum, task) => sum + this.getTaskCalendarMinutes(task), 0);
+    const completedCount = tasks.filter((task) => normalizeTaskStatus(task) === "completed").length;
+    const pieces = [];
+    if (totalMinutes > 0) {
+      pieces.push(formatCompactMinutes(totalMinutes));
+    }
+    if (completedCount > 0) {
+      pieces.push(`${completedCount} 完成`);
+    }
+    if (pieces.length === 0) {
+      pieces.push(`${tasks.length} 个任务`);
+    }
+    return `<div class="time-list-calendar-day-summary">${pieces.join(" · ")}</div>`;
+  }
+
+  renderCalendarDayDetail(tasks, focusDate) {
+    const dayTasks = sortTasksForDisplay(tasks.filter((task) => task.date === focusDate));
+    const footprintEntries = this.buildCalendarFootprintEntries(dayTasks, focusDate);
+    const totalMinutes = dayTasks.reduce((sum, task) => sum + this.getTaskCalendarMinutes(task), 0);
+    const completedCount = dayTasks.filter((task) => normalizeTaskStatus(task) === "completed").length;
+    const recordCount = footprintEntries.length;
+    return `
+      <aside class="time-list-calendar-detail">
+        <div class="time-list-calendar-detail-head">
+          <strong>${escapeHtml(formatCalendarDetailTitle(focusDate))}</strong>
+          <span>${escapeHtml(dayTasks.length ? `共 ${dayTasks.length} 个任务` : "这一天还没有任务")}</span>
+        </div>
+        <div class="time-list-calendar-detail-metrics">
+          <div>
+            <span>总投入</span>
+            <strong>${totalMinutes ? formatCompactMinutes(totalMinutes) : "0m"}</strong>
+          </div>
+          <div>
+            <span>已完成</span>
+            <strong>${completedCount}</strong>
+          </div>
+          <div>
+            <span>记录次数</span>
+            <strong>${recordCount}</strong>
+          </div>
+        </div>
+        <div class="time-list-calendar-detail-section">
+          <div class="time-list-calendar-detail-title">一天足迹</div>
+          <div class="time-list-calendar-footprint">
+            ${footprintEntries.length
+              ? footprintEntries.map((entry) => this.renderCalendarFootprintEntry(entry)).join("")
+              : `<div class="time-list-empty">这一天还没有可追踪的时间足迹。</div>`}
+          </div>
+        </div>
+      </aside>
+    `;
+  }
+
+  buildCalendarFootprintEntries(tasks, focusDate) {
+    const entries = [];
+
+    tasks.forEach((task) => {
+      normalizeManualEntries(task.manualEntries).forEach((item) => {
+        const recordedAt = normalizeTimestamp(item.recordedAt);
+        if (!recordedAt || !isTimestampOnDate(recordedAt, focusDate)) {
+          return;
+        }
+        entries.push({
+          id: `${task.id}-manual-${item.id}`,
+          kind: "manual-entry",
+          taskTitle: task.title,
+          minutes: item.minutes,
+          note: item.note || "",
+          recordedAt,
+          sortAt: recordedAt,
+        });
+      });
+
+      normalizePomodoros(task.pomodoros).forEach((item) => {
+        const startedAt = normalizeTimestamp(item.startedAt);
+        const endedAt = normalizeTimestamp(item.endedAt);
+        if (!startedAt || !endedAt) {
+          return;
+        }
+        const isVisible = isTimestampOnDate(startedAt, focusDate) || isTimestampOnDate(endedAt, focusDate);
+        if (!isVisible) {
+          return;
+        }
+        entries.push({
+          id: `${task.id}-pomodoro-${item.id}`,
+          kind: "pomodoro",
+          taskTitle: task.title,
+          minutes: item.minutes,
+          startedAt,
+          endedAt,
+          sortAt: endedAt,
+        });
+      });
+    });
+
+    return entries.sort((left, right) => {
+      const leftTime = Number.isFinite(left.sortAt) ? left.sortAt : Number.MAX_SAFE_INTEGER;
+      const rightTime = Number.isFinite(right.sortAt) ? right.sortAt : Number.MAX_SAFE_INTEGER;
+      return leftTime - rightTime || left.taskTitle.localeCompare(right.taskTitle, "zh-Hans-CN");
+    });
+  }
+
+  renderCalendarFootprintEntry(entry) {
+    const title = escapeHtml(entry.taskTitle);
+    if (entry.kind === "manual-entry") {
+      return `
+        <div class="time-list-calendar-footprint-item">
+          <div class="time-list-calendar-footprint-time">${escapeHtml(formatTimeOfDay(entry.recordedAt))}</div>
+          <div class="time-list-calendar-footprint-body">
+            <strong>${title}</strong>
+            <span>手动补记 · ${formatCompactMinutes(entry.minutes)}</span>
+            ${entry.note ? `<em>${escapeHtml(entry.note)}</em>` : ""}
+          </div>
+        </div>
+      `;
+    }
+
+    const timeText = formatTimeRange(entry.startedAt, entry.endedAt);
+    return `
+      <div class="time-list-calendar-footprint-item">
+        <div class="time-list-calendar-footprint-time">${escapeHtml(timeText)}</div>
+        <div class="time-list-calendar-footprint-body">
+          <strong>${title}</strong>
+          <span>番茄专注 · ${formatCompactMinutes(entry.minutes)}</span>
+        </div>
       </div>
     `;
   }
@@ -1937,9 +2235,8 @@ class TimeListPlugin extends Plugin {
   }
 
   renderTaskItem(task) {
-    const pomodoroMinutes = this.getTaskPomodoroMinutes(task);
     const status = normalizeTaskStatus(task);
-    const minutes = status === "completed" ? task.actualMinutes : pomodoroMinutes;
+    const minutes = status === "completed" ? task.actualMinutes : this.getTaskRecordedMinutes(task);
     const timeText = minutes ? formatCompactMinutes(minutes) : "0m";
 
     return `
@@ -1965,8 +2262,9 @@ class TimeListPlugin extends Plugin {
   renderPendingActions(task) {
     return `
       <div class="time-list-actions">
-        ${iconButton("iconTlCheck", "show-complete", "完成", "", task.id)}
+        ${iconButton("iconTlPlus", "append-manual-time", "追加时长", "", task.id)}
         ${iconButton("iconTlClock", "start-pomodoro", "开始番茄", "", task.id, this.state.activePomodoro)}
+        ${iconButton("iconTlCheck", "finish-task", "结束", "", task.id)}
         ${iconButton("iconTlClose", "abandon-task", "放弃", "danger", task.id)}
       </div>
     `;
@@ -2010,8 +2308,10 @@ class TimeListPlugin extends Plugin {
       }
       button.addEventListener("click", async () => {
         const taskId = button.dataset.taskId;
-        if (action === "show-complete") {
-          this.openCompleteTaskDialog(taskId);
+        if (action === "append-manual-time") {
+          this.openAppendManualTimeDialog(taskId);
+        } else if (action === "finish-task") {
+          this.openFinishTaskDialog(taskId);
         } else if (action === "switch-view") {
           this.currentDockView = button.dataset.view || "tasks";
           this.render({ preserveScroll: false });
@@ -2066,9 +2366,13 @@ class TimeListPlugin extends Plugin {
           await this.syncCalendarFromDailyNotes({ silent: false });
           this.refreshCalendarDialog();
           this.render();
+        } else if (action === "calendar-focus-date") {
+          this.calendarFocusDate = button.dataset.date || this.resolveCalendarFocusDate();
+          this.refreshCalendarDialog();
         } else if (action === "calendar-jump-month") {
           this.calendarDate = button.dataset.date || this.calendarDate;
           this.calendarMode = "month";
+          this.calendarFocusDate = this.calendarDate;
           this.refreshCalendarDialog();
           await this.syncCalendarFromDailyNotes({ silent: true });
           this.refreshCalendarDialog();
@@ -2164,6 +2468,7 @@ function cleanTaskLine(line) {
     .replace(/\s*(✅|✔️|☑️|🚫|❌)\s*/g, " ")
     .replace(/\s*⏱\s*\S+\s*/g, " ")
     .replace(/\s*🍅\s*\S+\s*/g, " ")
+    .replace(/\s*✍\s*\S+\s*/g, " ")
     .replace(/\s*用时\s*\S+\s*/g, " ")
     .replace(/\s*📝.*$/g, "")
     .replace(/\s*#\S+#?\s*$/g, "")
@@ -2199,13 +2504,19 @@ function formatDailyTaskLine(task, status = normalizeTaskStatus(task), options =
   if (pomodoroMinutes > 0) {
     parts.push(`🍅${formatCompactMinutes(pomodoroMinutes)}`);
   }
+  const manualMinutes = totalManualEntryMinutes(task.manualEntries);
+  if (manualMinutes > 0) {
+    parts.push(`✍${formatCompactMinutes(manualMinutes)}`);
+  }
   return parts.join(" ");
 }
 
 function buildTimeListAttrs(task) {
   const pomodoros = normalizePomodoros(task.pomodoros);
+  const manualEntries = normalizeManualEntries(task.manualEntries);
   return {
     [POMODOROS_ATTR]: pomodoros.length ? JSON.stringify(pomodoros) : "",
+    [MANUAL_ENTRIES_ATTR]: manualEntries.length ? JSON.stringify(manualEntries) : "",
     [ACTIVE_POMODORO_ATTR]: "",
     [SOURCE_ATTR]: task.source ? JSON.stringify(task.source) : "",
     [SOURCE_DOC_ID_ATTR]: task.sourceDocId ? JSON.stringify(task.sourceDocId) : "",
@@ -2300,6 +2611,7 @@ function parseDailyTaskRecord(line, row = {}) {
     blockId: row.id || "",
     actualMinutes,
     pomodoros: parsePomodoros(rawText, text, row),
+    manualEntries: parseManualEntries(rawText, text, row),
     activePomodoro: null,
     summary: summaryMatch ? unescapeMarkdown(summaryMatch[1].trim()) : "",
   };
@@ -2365,6 +2677,12 @@ function parsePomodoros(rawText, visibleText, row = {}) {
   }];
 }
 
+function parseManualEntries(rawText, visibleText, row = {}) {
+  const parsed = parseTimeListAttr(row, MANUAL_ENTRIES_ATTR) || parseTimeListComment(rawText, "manual-entries");
+  const manualEntries = normalizeManualEntries(parsed);
+  return manualEntries;
+}
+
 function parseActivePomodoro(rawText, visibleText, row = {}) {
   return normalizeActivePomodoro(
     parseTimeListAttr(row, ACTIVE_POMODORO_ATTR)
@@ -2405,6 +2723,14 @@ function parseTaskMinutes(text) {
 
 function parsePomodoroMinutes(text) {
   const match = /🍅\s*(?:(\d+)\s*h)?\s*(?:(\d+)\s*m)?/i.exec(String(text || ""));
+  if (match && (match[1] || match[2])) {
+    return (Number(match[1]) || 0) * 60 + (Number(match[2]) || 0);
+  }
+  return 0;
+}
+
+function parseManualMinutes(text) {
+  const match = /✍\s*(?:(\d+)\s*h)?\s*(?:(\d+)\s*m)?/i.exec(String(text || ""));
   if (match && (match[1] || match[2])) {
     return (Number(match[1]) || 0) * 60 + (Number(match[2]) || 0);
   }
@@ -2696,6 +3022,12 @@ function formatMonthDayWeek(dateKey) {
   return `${date.getMonth() + 1}/${date.getDate()}${weekday}`;
 }
 
+function formatCalendarDetailTitle(dateKey) {
+  const date = parseDateKey(dateKey);
+  const weekday = WEEKDAY_SHORT[(date.getDay() || 7) - 1];
+  return `${date.getMonth() + 1}月${date.getDate()}日 ${weekday}`;
+}
+
 function taskCalendarMark(status) {
   if (status === "completed") {
     return "✅";
@@ -2748,6 +3080,10 @@ function totalPomodoroMinutes(task) {
   return (task.pomodoros || []).reduce((sum, item) => sum + (Number(item.minutes) || 0), 0);
 }
 
+function totalManualEntryMinutes(entries) {
+  return normalizeManualEntries(entries).reduce((sum, item) => sum + item.minutes, 0);
+}
+
 function activePomodoroMinutes(active) {
   if (!active) {
     return 0;
@@ -2798,12 +3134,53 @@ function totalPomodoroItemMinutes(pomodoros) {
   return normalizePomodoros(pomodoros).reduce((sum, item) => sum + item.minutes, 0);
 }
 
+function normalizeManualEntries(entries) {
+  if (!Array.isArray(entries)) {
+    return [];
+  }
+  return entries
+    .map((item) => {
+      const minutes = Number(item?.minutes) || 0;
+      if (minutes <= 0) {
+        return null;
+      }
+      return {
+        id: String(item.id || `${item.recordedAt || ""}-${minutes}`),
+        minutes,
+        recordedAt: String(item.recordedAt || ""),
+        note: String(item.note || "").trim(),
+      };
+    })
+    .filter(Boolean)
+    .sort((left, right) => {
+      const leftTime = Date.parse(left.recordedAt || "") || 0;
+      const rightTime = Date.parse(right.recordedAt || "") || 0;
+      return leftTime - rightTime;
+    });
+}
+
+function mergeManualEntries(existing, incoming) {
+  const byKey = new Map();
+  [...normalizeManualEntries(existing), ...normalizeManualEntries(incoming)].forEach((item) => {
+    byKey.set(item.id || `${item.recordedAt}-${item.minutes}`, item);
+  });
+  return Array.from(byKey.values()).sort((left, right) => {
+    const leftTime = Date.parse(left.recordedAt || "") || 0;
+    const rightTime = Date.parse(right.recordedAt || "") || 0;
+    return leftTime - rightTime;
+  });
+}
+
 function isAggregatePomodoro(item) {
   return String(item?.id || "").startsWith("daily-aggregate-");
 }
 
 function pomodoroSignature(pomodoros) {
   return JSON.stringify(normalizePomodoros(pomodoros));
+}
+
+function manualEntrySignature(entries) {
+  return JSON.stringify(normalizeManualEntries(entries));
 }
 
 function normalizeActivePomodoro(active, taskId = active?.taskId) {
@@ -2856,6 +3233,38 @@ function normalizeTimestamp(value) {
 function getActiveElapsedMs(active) {
   const now = active.isPaused ? active.pausedAt : Date.now();
   return Math.max(0, now - active.startedAt - (active.pausedMs || 0));
+}
+
+function isTimestampOnDate(timestamp, dateKey) {
+  if (!timestamp || !isValidDateKey(dateKey)) {
+    return false;
+  }
+  return formatDateKey(new Date(timestamp)) === dateKey;
+}
+
+function isValidDateKey(value) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(String(value || ""));
+}
+
+function formatTimeOfDay(timestamp) {
+  if (!timestamp) {
+    return "--:--";
+  }
+  const date = new Date(timestamp);
+  return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+}
+
+function formatTimeRange(startedAt, endedAt) {
+  if (startedAt && endedAt) {
+    return `${formatTimeOfDay(startedAt)} - ${formatTimeOfDay(endedAt)}`;
+  }
+  if (startedAt) {
+    return `${formatTimeOfDay(startedAt)} 开始`;
+  }
+  if (endedAt) {
+    return `${formatTimeOfDay(endedAt)} 结束`;
+  }
+  return "时间未知";
 }
 
 function formatClock(ms) {
