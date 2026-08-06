@@ -738,12 +738,12 @@ class TimeListPlugin extends Plugin {
     }
     const notebook = await this.ensureNotebookId();
     const stmt = [
-      "select id, markdown, content, ial, created, updated from blocks",
-      `where box = '${escapeSql(notebook)}'`,
+      `select ${buildDailyTaskBlockSelect("blocks")} from blocks`,
+      `where blocks.box = '${escapeSql(notebook)}'`,
       "and type <> 'd'",
-      `and root_id = '${escapeSql(dailyNoteId)}'`,
-      `and (markdown like '%${escapeSql(date)}%' or content like '%${escapeSql(date)}%')`,
-      "order by created asc",
+      `and blocks.root_id = '${escapeSql(dailyNoteId)}'`,
+      `and (blocks.markdown like '%${escapeSql(date)}%' or blocks.content like '%${escapeSql(date)}%')`,
+      "order by blocks.created asc",
     ].join(" ");
     const rows = await this.request("/api/query/sql", { stmt });
     return Array.isArray(rows) ? rows : [];
@@ -756,11 +756,11 @@ class TimeListPlugin extends Plugin {
     }
     const notebook = await this.ensureNotebookId();
     const stmt = [
-      "select id, markdown, content, ial, created, updated from blocks",
-      `where box = '${escapeSql(notebook)}'`,
+      `select ${buildDailyTaskBlockSelect("blocks")} from blocks`,
+      `where blocks.box = '${escapeSql(notebook)}'`,
       "and type <> 'd'",
-      `and root_id in (${ids.map((id) => `'${escapeSql(id)}'`).join(", ")})`,
-      "order by created asc",
+      `and blocks.root_id in (${ids.map((id) => `'${escapeSql(id)}'`).join(", ")})`,
+      "order by blocks.created asc",
     ].join(" ");
     const rows = await this.request("/api/query/sql", { stmt });
     return Array.isArray(rows) ? rows : [];
@@ -1897,26 +1897,9 @@ class TimeListPlugin extends Plugin {
     return recordedMinutes;
   }
 
-  getTaskCalendarBadges(task) {
-    const badges = [];
-    const status = normalizeTaskStatus(task);
-    const actualMinutes = Number(task.actualMinutes) || 0;
-    const manualMinutes = this.getTaskManualMinutes(task);
-    const pomodoroMinutes = this.getTaskPomodoroMinutes(task);
-
-    if (status === "completed" && actualMinutes > 0) {
-      badges.push(`⏱ ${formatCompactMinutes(actualMinutes)}`);
-    }
-    if (manualMinutes > 0) {
-      badges.push(`✍ ${formatCompactMinutes(manualMinutes)}`);
-    }
-    if (pomodoroMinutes > 0 && (status !== "completed" || pomodoroMinutes !== actualMinutes)) {
-      badges.push(`🍅 ${formatCompactMinutes(pomodoroMinutes)}`);
-    }
-    if (badges.length === 0) {
-      badges.push(status === "completed" ? "已完成" : status === "abandoned" ? "已放弃" : "未记录");
-    }
-    return badges;
+  getTaskCalendarTimeText(task) {
+    const totalMinutes = this.getTaskCalendarMinutes(task);
+    return totalMinutes > 0 ? formatCompactMinutes(totalMinutes) : "";
   }
 
   renderCalendarWeekView(tasks, focusDate) {
@@ -1995,13 +1978,12 @@ class TimeListPlugin extends Plugin {
 
   renderCalendarEvent(task) {
     const status = normalizeTaskStatus(task);
-    const badges = this.getTaskCalendarBadges(task);
-    const timeText = badges.join(" · ");
+    const timeText = this.getTaskCalendarTimeText(task);
     return `
       <div class="time-list-calendar-event time-list-calendar-event--${status}" title="${escapeAttr(task.title)}">
         <div class="time-list-calendar-event-row">
           <strong>${taskCalendarMark(status)} ${escapeHtml(task.title)}</strong>
-          <span class="time-list-calendar-event-time">${escapeHtml(timeText)}</span>
+          ${timeText ? `<span class="time-list-calendar-event-time">${escapeHtml(timeText)}</span>` : ""}
         </div>
       </div>
     `;
@@ -2659,6 +2641,28 @@ function parseIalAttr(ial, key) {
   return match ? match[1] : "";
 }
 
+function buildDailyTaskBlockSelect(tableName = "blocks") {
+  const table = tableName || "blocks";
+  return [
+    `${table}.id`,
+    `${table}.markdown`,
+    `${table}.content`,
+    `${table}.ial`,
+    `${table}.created`,
+    `${table}.updated`,
+    buildBlockAttrSelect(table, POMODOROS_ATTR),
+    buildBlockAttrSelect(table, MANUAL_ENTRIES_ATTR),
+    buildBlockAttrSelect(table, ACTIVE_POMODORO_ATTR),
+    buildBlockAttrSelect(table, SOURCE_ATTR),
+    buildBlockAttrSelect(table, SOURCE_DOC_ID_ATTR),
+    buildBlockAttrSelect(table, SOURCE_KEY_ATTR),
+  ].join(", ");
+}
+
+function buildBlockAttrSelect(tableName, attrName) {
+  return `(select value from attributes where block_id = ${tableName}.id and name = '${escapeSql(attrName)}' limit 1) as "${attrName}"`;
+}
+
 function parsePomodoros(rawText, visibleText, row = {}) {
   const visibleMinutes = parsePomodoroMinutes(visibleText);
   if (visibleMinutes <= 0) {
@@ -2666,13 +2670,14 @@ function parsePomodoros(rawText, visibleText, row = {}) {
   }
   const parsed = parseTimeListAttr(row, POMODOROS_ATTR) || parseTimeListComment(rawText, "pomodoros");
   const pomodoros = normalizePomodoros(parsed);
-  if (pomodoros.length > 0 && totalPomodoroItemMinutes(pomodoros) === visibleMinutes) {
-    return pomodoros;
+  if (pomodoros.length > 0) {
+    return reconcilePomodoroDetailsWithVisibleMinutes(pomodoros, visibleMinutes);
   }
+  const referenceTime = getRowReferenceTimestamp(row);
   return [{
     id: `daily-aggregate-${visibleMinutes}`,
-    startedAt: "",
-    endedAt: "",
+    startedAt: referenceTime ? new Date(referenceTime - visibleMinutes * 60000).toISOString() : "",
+    endedAt: referenceTime ? new Date(referenceTime).toISOString() : "",
     minutes: visibleMinutes,
   }];
 }
@@ -2684,13 +2689,14 @@ function parseManualEntries(rawText, visibleText, row = {}) {
   }
   const parsed = parseTimeListAttr(row, MANUAL_ENTRIES_ATTR) || parseTimeListComment(rawText, "manual-entries");
   const manualEntries = normalizeManualEntries(parsed);
-  if (manualEntries.length > 0 && totalManualEntryMinutes(manualEntries) === visibleMinutes) {
-    return manualEntries;
+  if (manualEntries.length > 0) {
+    return reconcileManualDetailsWithVisibleMinutes(manualEntries, visibleMinutes);
   }
+  const referenceTime = getRowReferenceTimestamp(row);
   return [{
     id: `daily-manual-aggregate-${visibleMinutes}`,
     minutes: visibleMinutes,
-    recordedAt: "",
+    recordedAt: referenceTime ? new Date(referenceTime).toISOString() : "",
     note: "",
   }];
 }
@@ -2747,6 +2753,12 @@ function parseManualMinutes(text) {
     return (Number(match[1]) || 0) * 60 + (Number(match[2]) || 0);
   }
   return 0;
+}
+
+function getRowReferenceTimestamp(row = {}) {
+  return Date.parse(
+    row.updated ? siyuanTimeToIso(row.updated) : row.created ? siyuanTimeToIso(row.created) : ""
+  ) || 0;
 }
 
 function shouldSyncAfterDocumentSave(event, dailyNoteId) {
@@ -3146,6 +3158,20 @@ function totalPomodoroItemMinutes(pomodoros) {
   return normalizePomodoros(pomodoros).reduce((sum, item) => sum + item.minutes, 0);
 }
 
+function reconcilePomodoroDetailsWithVisibleMinutes(pomodoros, visibleMinutes) {
+  const detailItems = normalizePomodoros(pomodoros).filter((item) => !isAggregatePomodoro(item));
+  if (detailItems.length === 0) {
+    const referenceTime = getLatestPomodoroTimestamp(pomodoros);
+    return [{
+      id: `daily-aggregate-${visibleMinutes}`,
+      startedAt: referenceTime ? new Date(referenceTime - visibleMinutes * 60000).toISOString() : "",
+      endedAt: referenceTime ? new Date(referenceTime).toISOString() : "",
+      minutes: visibleMinutes,
+    }];
+  }
+  return fitTimedEntriesToVisibleMinutes(detailItems, visibleMinutes);
+}
+
 function normalizeManualEntries(entries) {
   if (!Array.isArray(entries)) {
     return [];
@@ -3188,6 +3214,88 @@ function mergeManualEntries(existing, incoming) {
     const rightTime = Date.parse(right.recordedAt || "") || 0;
     return leftTime - rightTime;
   });
+}
+
+function reconcileManualDetailsWithVisibleMinutes(entries, visibleMinutes) {
+  const detailItems = normalizeManualEntries(entries).filter((item) => !isAggregateManualEntry(item));
+  if (detailItems.length === 0) {
+    const referenceTime = getLatestManualTimestamp(entries);
+    return [{
+      id: `daily-manual-aggregate-${visibleMinutes}`,
+      minutes: visibleMinutes,
+      recordedAt: referenceTime ? new Date(referenceTime).toISOString() : "",
+      note: "",
+    }];
+  }
+  return fitTimedEntriesToVisibleMinutes(detailItems, visibleMinutes);
+}
+
+function fitTimedEntriesToVisibleMinutes(entries, visibleMinutes) {
+  const normalizedTarget = Math.max(0, Math.round(Number(visibleMinutes) || 0));
+  const items = entries.map((item) => ({
+    ...item,
+    minutes: Math.max(0, Math.round(Number(item.minutes) || 0)),
+  }));
+  const currentTotal = items.reduce((sum, item) => sum + item.minutes, 0);
+  if (normalizedTarget === currentTotal) {
+    return items;
+  }
+  if (items.length === 0 || normalizedTarget <= 0) {
+    return [];
+  }
+  if (normalizedTarget > currentTotal) {
+    const lastItem = items[items.length - 1];
+    lastItem.minutes += normalizedTarget - currentTotal;
+    return items.map(syncTimedEntryBounds).filter(Boolean);
+  }
+
+  let overflow = currentTotal - normalizedTarget;
+  for (let index = items.length - 1; index >= 0 && overflow > 0; index -= 1) {
+    const item = items[index];
+    const deduction = Math.min(item.minutes, overflow);
+    item.minutes -= deduction;
+    overflow -= deduction;
+  }
+  return items.filter((item) => item.minutes > 0).map(syncTimedEntryBounds).filter(Boolean);
+}
+
+function syncTimedEntryBounds(item) {
+  if (!item || (Number(item.minutes) || 0) <= 0) {
+    return null;
+  }
+  if ("startedAt" in item || "endedAt" in item) {
+    const startedAt = normalizeTimestamp(item.startedAt);
+    const endedAt = normalizeTimestamp(item.endedAt);
+    if (startedAt) {
+      return {
+        ...item,
+        startedAt: new Date(startedAt).toISOString(),
+        endedAt: new Date(startedAt + item.minutes * 60000).toISOString(),
+      };
+    }
+    if (endedAt) {
+      return {
+        ...item,
+        startedAt: new Date(endedAt - item.minutes * 60000).toISOString(),
+        endedAt: new Date(endedAt).toISOString(),
+      };
+    }
+  }
+  return item;
+}
+
+function getLatestPomodoroTimestamp(pomodoros) {
+  return normalizePomodoros(pomodoros).reduce((latest, item) => {
+    const endedAt = normalizeTimestamp(item.endedAt);
+    const startedAt = normalizeTimestamp(item.startedAt);
+    return Math.max(latest, endedAt || startedAt || 0);
+  }, 0);
+}
+
+function getLatestManualTimestamp(entries) {
+  return normalizeManualEntries(entries).reduce((latest, item) => {
+    return Math.max(latest, normalizeTimestamp(item.recordedAt));
+  }, 0);
 }
 
 function isAggregateManualEntry(item) {
