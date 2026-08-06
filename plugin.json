@@ -1,0 +1,40 @@
+{
+  "name": "siyuan-time-list",
+  "author": "xiaowu",
+  "url": "https://github.com/xiaowu/siyuan-time-list",
+  "version": "0.0.1",
+  "minAppVersion": "3.1.0",
+  "backends": [
+    "windows",
+    "linux",
+    "darwin",
+    "ios",
+    "android",
+    "harmony",
+    "docker"
+  ],
+  "frontends": [
+    "desktop",
+    "mobile",
+    "browser-desktop",
+    "browser-mobile",
+    "desktop-window"
+  ],
+  "disabledInPublish": true,
+  "displayName": {
+    "default": "Daily Time List",
+    "zh_CN": "日记任务计时"
+  },
+  "description": {
+    "default": "Create daily tasks, track focus sessions, and summarize today's time.",
+    "zh_CN": "在今日日记中创建任务，侧栏番茄专注并统计总时长。"
+  },
+  "readme": {
+    "default": "README.md",
+    "zh_CN": "README.md"
+  },
+  "i18n": [
+    "zh_CN",
+    "en_US"
+  ]
+}

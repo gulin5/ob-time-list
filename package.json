@@ -1,0 +1,23 @@
+{
+  "name": "siyuan-time-list",
+  "version": "0.0.1",
+  "description": "在思源今日日记里创建任务、番茄专注并统计今日任务时长。",
+  "main": "index.js",
+  "scripts": {
+    "check": "node --check index.js"
+  },
+  "keywords": [
+    "siyuan",
+    "plugin",
+    "daily-note",
+    "pomodoro",
+    "time-tracking",
+    "日记",
+    "番茄钟"
+  ],
+  "author": "xiaowu",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {},
+  "devDependencies": {}
+}
