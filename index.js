@@ -722,7 +722,7 @@ class TimeListPlugin extends Plugin {
 
   async findDailyTaskBlockId(task) {
     const rows = await this.queryDailyTaskBlocks(task.date || todayKey());
-    const records = parseDailyTaskRecordsFromRows(rows, this.getDocumentSyncOptions())
+    const records = parseDailyTaskRecordsFromRows(rows, this.getDocumentSyncOptions({ defaultDate: task.date || todayKey() }))
       .filter((record) => record.date === (task.date || todayKey()))
       .filter((record) => {
         if (task.taskUid && record.taskUid) {
@@ -769,7 +769,6 @@ class TimeListPlugin extends Plugin {
       `where blocks.box = '${escapeSql(notebook)}'`,
       "and type <> 'd'",
       `and blocks.root_id = '${escapeSql(dailyNoteId)}'`,
-      `and (blocks.markdown like '%${escapeSql(date)}%' or blocks.content like '%${escapeSql(date)}%')`,
       "order by blocks.created asc",
     ].join(" ");
     const rows = await this.request("/api/query/sql", { stmt });
@@ -793,9 +792,10 @@ class TimeListPlugin extends Plugin {
     return Array.isArray(rows) ? rows : [];
   }
 
-  getDocumentSyncOptions() {
+  getDocumentSyncOptions(extra = {}) {
     return {
       adjustTimelineOnVisibleTimeChange: this.settings.adjustTimelineOnVisibleTimeChange !== false,
+      ...extra,
     };
   }
 
@@ -814,7 +814,7 @@ class TimeListPlugin extends Plugin {
       }
       return 0;
     }
-    const parsed = parseDailyTaskRows(rows, this.getDocumentSyncOptions());
+    const parsed = parseDailyTaskRows(rows, this.getDocumentSyncOptions({ defaultDate: date }));
     const records = parsed.records.filter((record) => record.date === date);
     const changed = this.mergeDailyTaskRecords(records, date, {
       invalidBlockIds: parsed.invalidBlockIdsByDate.get(date) || new Set(),
@@ -850,7 +850,9 @@ class TimeListPlugin extends Plugin {
       return 0;
     }
 
-    const parsed = parseDailyTaskRows(rows, this.getDocumentSyncOptions());
+    const parsed = parseDailyTaskRows(rows, this.getDocumentSyncOptions({
+      rootDateByRootId: new Map(Array.from(dailyNoteIds.entries()).map(([dateKey, rootId]) => [String(rootId), dateKey])),
+    }));
     const recordsByDate = new Map();
     parsed.records
       .filter((record) => dateSet.has(record.date))
@@ -1086,7 +1088,7 @@ class TimeListPlugin extends Plugin {
     if (this.settings.notebookId) {
       try {
         const rows = await this.queryDailyTaskBlocks(date);
-        parseDailyTaskRecordsFromRows(rows, this.getDocumentSyncOptions())
+        parseDailyTaskRecordsFromRows(rows, this.getDocumentSyncOptions({ defaultDate: date }))
           .filter((record) => record.date === date)
           .forEach((record) => existingKeys.add(normalizeTitleKey(record.title)));
       } catch (error) {
@@ -2542,8 +2544,7 @@ function formatDailyTaskRecord(task, status = normalizeTaskStatus(task), options
 }
 
 function formatDailyTaskLine(task, status = normalizeTaskStatus(task), options = {}) {
-  const date = task.date || todayKey();
-  const parts = [escapeMarkdown(task.title), date];
+  const parts = [escapeMarkdown(task.title)];
   if (status === "completed") {
     const minutes = Number(options.minutes ?? task.actualMinutes) || 0;
     parts.push("✅");
@@ -2633,6 +2634,20 @@ function parseDailyTaskRows(rows, options = {}) {
   const invalidBlockIdsByDate = new Map();
   rows.forEach((row) => {
     const markdown = String(row.markdown || row.content || "");
+    if (isAttributedTaskBlock(row, markdown)) {
+      const firstTaskLine = findFirstTaskCandidateLine(markdown);
+      const parsedRecord = firstTaskLine ? parseDailyTaskRecord(firstTaskLine, row, options) : null;
+      if (!parsedRecord) {
+        return;
+      }
+      records.push({
+        ...parsedRecord,
+        blockId: row.id || "",
+        createdAt: row.created ? siyuanTimeToIso(row.created) : "",
+        updatedAt: row.updated ? siyuanTimeToIso(row.updated) : "",
+      });
+      return;
+    }
     const parsedLines = markdown
       .split(/\n+/)
       .map((line) => parseDailyTaskRecord(line, row, options))
@@ -2671,10 +2686,14 @@ function parseDailyTaskRecord(line, row = {}, options = {}) {
   const rawText = String(line || "").trim();
   const text = stripTimeListComments(rawText);
   const dateMatch = /(?:\uD83D\uDCC5\s*)?(\d{4}-\d{2}-\d{2})/.exec(text);
-  if (!dateMatch) {
+  const inferredDate = dateMatch ? dateMatch[1] : inferTaskRecordDate(row, options);
+  if (!inferredDate) {
     return null;
   }
-  const title = cleanTaskLine(text.slice(0, dateMatch.index));
+  if (!dateMatch && !hasTaskMetadata(row, rawText)) {
+    return null;
+  }
+  const title = cleanTaskLine(dateMatch ? text.slice(0, dateMatch.index) : text);
   if (!title || isMetadataLine(title)) {
     return null;
   }
@@ -2686,7 +2705,7 @@ function parseDailyTaskRecord(line, row = {}, options = {}) {
   return {
     taskUid,
     title,
-    date: dateMatch[1],
+    date: inferredDate,
     status,
     source,
     sourceDocId: source ? String(parseTimeListAttr(row, SOURCE_DOC_ID_ATTR) || parseTimeListComment(rawText, "source-doc-id") || "") : "",
@@ -2698,6 +2717,42 @@ function parseDailyTaskRecord(line, row = {}, options = {}) {
     activePomodoro: null,
     summary: summaryMatch ? unescapeMarkdown(summaryMatch[1].trim()) : "",
   };
+}
+
+function inferTaskRecordDate(row = {}, options = {}) {
+  const rootId = String(row.root_id || "").trim();
+  if (rootId && options.rootDateByRootId instanceof Map && options.rootDateByRootId.has(rootId)) {
+    return options.rootDateByRootId.get(rootId) || "";
+  }
+  return String(options.defaultDate || "").trim();
+}
+
+function isAttributedTaskBlock(row = {}, rawText = "") {
+  return hasTaskMetadata(row, rawText);
+}
+
+function findFirstTaskCandidateLine(markdown = "") {
+  const lines = String(markdown || "").split(/\n/);
+  for (const line of lines) {
+    const trimmed = String(line || "").trim();
+    if (!trimmed || trimmed === "---" || trimmed.startsWith("#") || trimmed.startsWith("|")) {
+      continue;
+    }
+    return trimmed;
+  }
+  return "";
+}
+
+function hasTaskMetadata(row = {}, rawText = "") {
+  return Boolean(
+    parseTimeListAttr(row, TASK_UID_ATTR)
+    || parseTimeListAttr(row, POMODOROS_ATTR)
+    || parseTimeListAttr(row, MANUAL_ENTRIES_ATTR)
+    || parseTimeListAttr(row, SOURCE_ATTR)
+    || parseTimeListComment(rawText, "pomodoros")
+    || parseTimeListComment(rawText, "manual-entries")
+    || parseTimeListComment(rawText, "source")
+  );
 }
 
 function normalizeTaskSource(source) {
@@ -2746,6 +2801,7 @@ function buildDailyTaskBlockSelect(tableName = "blocks") {
   const table = tableName || "blocks";
   return [
     `${table}.id`,
+    `${table}.root_id`,
     `${table}.markdown`,
     `${table}.content`,
     `${table}.ial`,
