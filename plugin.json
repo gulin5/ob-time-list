@@ -2,7 +2,7 @@
   "name": "siyuan-time-list",
   "author": "xiaowu",
   "url": "https://github.com/xiaowu/siyuan-time-list",
-  "version": "0.0.1",
+  "version": "1.0.1",
   "minAppVersion": "3.1.0",
   "backends": [
     "windows",
