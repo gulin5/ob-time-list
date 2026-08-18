@@ -1,10 +1,10 @@
 {
   "name": "siyuan-time-list",
   "version": "0.0.1",
-  "description": "在思源今日日记里创建任务、番茄专注并统计今日任务时长。",
-  "main": "index.js",
+  "description": "在 Obsidian 今日日记里创建任务、番茄专注并统计今日任务时长。",
+  "main": "main.js",
   "scripts": {
-    "check": "node --check index.js"
+    "check": "node --check main.js"
   },
   "keywords": [
     "siyuan",

@@ -564,7 +564,7 @@ class TimeListPlugin extends Plugin {
     const monthConditions = Array.from(new Set(Array.from(compactDates).map((date) => date.slice(0, 6))))
       .map((monthKey) => `name like 'custom-dailynote-${monthKey}__'`);
     const stmt = [
-      "select id, ial from blocks",
+      "select id, ial, content, hpath from blocks",
       `where type = 'd' and box = '${escapeSql(this.settings.notebookId)}'`,
       `and id in (select block_id from attributes where ${monthConditions.join(" or ")})`,
     ].join(" ");
@@ -606,11 +606,10 @@ class TimeListPlugin extends Plugin {
     }
     const yearConditions = years.flatMap((year) => [
       `content like '%${escapeSql(year)}%'`,
-      `markdown like '%${escapeSql(year)}%'`,
       `hpath like '%${escapeSql(year)}%'`,
     ]);
     const stmt = [
-      "select id, ial, content, markdown, hpath from blocks",
+      "select id, ial, content, hpath from blocks",
       `where type = 'd' and box = '${escapeSql(this.settings.notebookId)}'`,
       `and (${yearConditions.join(" or ")})`,
     ].join(" ");
@@ -625,11 +624,10 @@ class TimeListPlugin extends Plugin {
     }
     const conditions = candidates.flatMap((candidate) => [
       `content like '%${escapeSql(candidate)}%'`,
-      `markdown like '%${escapeSql(candidate)}%'`,
       `hpath like '%${escapeSql(candidate)}%'`,
     ]);
     const stmt = [
-      "select id, ial, content, markdown, hpath from blocks",
+      "select id, ial, content, hpath from blocks",
       `where type = 'd' and box = '${escapeSql(this.settings.notebookId)}'`,
       `and (${conditions.join(" or ")})`,
     ].join(" ");
@@ -2690,7 +2688,8 @@ function parseDailyTaskRecord(line, row = {}, options = {}) {
   if (!inferredDate) {
     return null;
   }
-  if (!dateMatch && !hasTaskMetadata(row, rawText)) {
+  const canRecoverLegacyRecord = isLegacyDailyTaskLine(rawText, text);
+  if (!dateMatch && !hasTaskMetadata(row, rawText) && !canRecoverLegacyRecord) {
     return null;
   }
   const title = cleanTaskLine(dateMatch ? text.slice(0, dateMatch.index) : text);
@@ -2753,6 +2752,23 @@ function hasTaskMetadata(row = {}, rawText = "") {
     || parseTimeListComment(rawText, "manual-entries")
     || parseTimeListComment(rawText, "source")
   );
+}
+
+function isLegacyDailyTaskLine(rawText = "", visibleText = "") {
+  const text = String(visibleText || stripTimeListComments(rawText)).trim();
+  if (!text) {
+    return false;
+  }
+  if (isMetadataLine(text)) {
+    return false;
+  }
+  if (text.includes("\n") || text === "---" || text.startsWith("#") || text.startsWith("|")) {
+    return false;
+  }
+  if (!/[✅✔️☑️🚫❌⏱🍅✍]/.test(text)) {
+    return false;
+  }
+  return Boolean(cleanTaskLine(text));
 }
 
 function normalizeTaskSource(source) {
@@ -3067,15 +3083,29 @@ function detectDailyNoteDate(row, dates) {
     }
   }
 
-  const haystack = [
-    row?.content,
-    row?.markdown,
-    row?.hpath,
-  ].map((value) => String(value || "")).join("\n");
+  const haystacks = getDailyNoteIdentityTexts(row);
 
   return dates.find((date) => {
-    return getDateNameCandidates(date).some((candidate) => haystack.includes(candidate));
+    return getDateNameCandidates(date).some((candidate) => haystacks.some((haystack) => haystack.includes(candidate)));
   }) || "";
+}
+
+function getDailyNoteIdentityTexts(row = {}) {
+  const texts = [];
+  const hpath = String(row?.hpath || "").trim();
+  if (hpath) {
+    texts.push(hpath);
+    const normalized = hpath.replace(/\\/g, "/");
+    const leaf = normalized.split("/").filter(Boolean).at(-1);
+    if (leaf) {
+      texts.push(leaf);
+    }
+  }
+  const content = String(row?.content || "").trim();
+  if (content && !/[\r\n]/.test(content) && content.length <= 80) {
+    texts.push(content);
+  }
+  return Array.from(new Set(texts.filter(Boolean)));
 }
 
 function getDateNameCandidates(date) {

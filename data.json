@@ -1,0 +1,94 @@
+{
+  "settings": {
+    "dailyFolder": "daily note",
+    "habitFile": "daily note/daily habits.md",
+    "syncToDailyNote": true
+  },
+  "state": {
+    "version": 1,
+    "tasks": [
+      {
+        "id": "task:2026-08-18::多邻国",
+        "uid": "task:2026-08-18::多邻国",
+        "title": "多邻国",
+        "date": "2026-08-18",
+        "status": "pending",
+        "source": "",
+        "sourceFile": "",
+        "createdAt": "2026-08-18T05:28:46.259Z",
+        "completedAt": "",
+        "abandonedAt": "",
+        "actualMinutes": 0,
+        "summary": "",
+        "pomodoros": [],
+        "manualEntries": []
+      },
+      {
+        "id": "task:2026-08-18::看书",
+        "uid": "task:2026-08-18::看书",
+        "title": "看书",
+        "date": "2026-08-18",
+        "status": "pending",
+        "source": "",
+        "sourceFile": "",
+        "createdAt": "2026-08-18T05:28:46.259Z",
+        "completedAt": "",
+        "abandonedAt": "",
+        "actualMinutes": 0,
+        "summary": "",
+        "pomodoros": [],
+        "manualEntries": []
+      },
+      {
+        "id": "task:2026-08-18::日语新闻",
+        "uid": "task:2026-08-18::日语新闻",
+        "title": "日语新闻",
+        "date": "2026-08-18",
+        "status": "pending",
+        "source": "",
+        "sourceFile": "",
+        "createdAt": "2026-08-18T05:28:46.259Z",
+        "completedAt": "",
+        "abandonedAt": "",
+        "actualMinutes": 0,
+        "summary": "",
+        "pomodoros": [],
+        "manualEntries": []
+      },
+      {
+        "id": "task:2026-08-18::英语听力",
+        "uid": "task:2026-08-18::英语听力",
+        "title": "英语听力",
+        "date": "2026-08-18",
+        "status": "pending",
+        "source": "",
+        "sourceFile": "",
+        "createdAt": "2026-08-18T05:28:46.259Z",
+        "completedAt": "",
+        "abandonedAt": "",
+        "actualMinutes": 0,
+        "summary": "",
+        "pomodoros": [],
+        "manualEntries": []
+      },
+      {
+        "id": "task:2026-08-18::运动",
+        "uid": "task:2026-08-18::运动",
+        "title": "运动",
+        "date": "2026-08-18",
+        "status": "pending",
+        "source": "",
+        "sourceFile": "",
+        "createdAt": "2026-08-18T05:28:46.259Z",
+        "completedAt": "",
+        "abandonedAt": "",
+        "actualMinutes": 0,
+        "summary": "",
+        "pomodoros": [],
+        "manualEntries": []
+      }
+    ],
+    "activePomodoro": null,
+    "dismissedHabitTasks": {}
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "id": "siyuan-time-list",
+  "name": "Daily Time List",
+  "version": "0.0.1",
+  "minAppVersion": "1.5.0",
+  "description": "Create daily tasks, track focus sessions, and summarize today's time inside existing Obsidian daily notes.",
+  "author": "xiaowu",
+  "authorUrl": "https://github.com/xiaowu/siyuan-time-list",
+  "isDesktopOnly": false
+}
