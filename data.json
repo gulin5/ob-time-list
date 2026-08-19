@@ -15,46 +15,63 @@
         "status": "pending",
         "source": "",
         "sourceFile": "",
-        "createdAt": "2026-08-19T00:51:21.070Z",
+        "createdAt": "2026-08-19T08:33:41.659Z",
         "completedAt": "",
         "abandonedAt": "",
         "actualMinutes": 0,
         "summary": "",
         "pomodoros": [
           {
-            "id": "task:2026-08-19::百词斩:pomodoro",
-            "startedAt": "2026-08-19T04:00:00.000Z",
-            "endedAt": "2026-08-19T04:00:00.000Z",
+            "id": "mszu4bh7-v4wvbm",
+            "startedAt": "",
+            "endedAt": "",
             "minutes": 2
           }
         ],
         "manualEntries": []
       },
       {
-        "id": "task:2026-08-19::多邻国",
-        "uid": "task:2026-08-19::多邻国",
-        "title": "多邻国",
+        "id": "task:2026-08-19::测试",
+        "uid": "task:2026-08-19::测试",
+        "title": "测试",
         "date": "2026-08-19",
         "status": "pending",
         "source": "",
         "sourceFile": "",
-        "createdAt": "2026-08-19T00:51:21.070Z",
+        "createdAt": "2026-08-19T08:33:41.659Z",
         "completedAt": "",
         "abandonedAt": "",
         "actualMinutes": 0,
         "summary": "",
+        "pomodoros": [],
+        "manualEntries": [
+          {
+            "id": "mszu4bh7-q33zbz",
+            "minutes": 22,
+            "recordedAt": "2026-08-19T08:17:00.000Z",
+            "note": ""
+          }
+        ]
+      },
+      {
+        "id": "task:2026-08-19::多邻国",
+        "uid": "task:2026-08-19::多邻国",
+        "title": "多邻国",
+        "date": "2026-08-19",
+        "status": "completed",
+        "source": "",
+        "sourceFile": "",
+        "createdAt": "2026-08-19T08:33:41.659Z",
+        "completedAt": "2026-08-19T08:49:42.976Z",
+        "abandonedAt": "",
+        "actualMinutes": 69,
+        "summary": "还是不是第一",
         "pomodoros": [
           {
-            "id": "msze2in9-z1rm6z",
-            "startedAt": "2026-08-19T01:04:23.781Z",
-            "endedAt": "2026-08-19T01:34:24.492Z",
-            "minutes": 30
-          },
-          {
-            "id": "mszl6hya-im0w2u",
-            "startedAt": "2026-08-19T04:23:26.818Z",
-            "endedAt": "2026-08-19T05:02:34.314Z",
-            "minutes": 39
+            "id": "mszu4bh7-ke59mu",
+            "startedAt": "",
+            "endedAt": "",
+            "minutes": 69
           }
         ],
         "manualEntries": []
@@ -67,7 +84,7 @@
         "status": "pending",
         "source": "",
         "sourceFile": "",
-        "createdAt": "2026-08-19T00:51:21.070Z",
+        "createdAt": "2026-08-19T08:33:41.659Z",
         "completedAt": "",
         "abandonedAt": "",
         "actualMinutes": 0,
@@ -83,23 +100,7 @@
         "status": "pending",
         "source": "",
         "sourceFile": "",
-        "createdAt": "2026-08-19T00:51:21.070Z",
-        "completedAt": "",
-        "abandonedAt": "",
-        "actualMinutes": 0,
-        "summary": "",
-        "pomodoros": [],
-        "manualEntries": []
-      },
-      {
-        "id": "task:2026-08-19::英语听力",
-        "uid": "task:2026-08-19::英语听力",
-        "title": "英语听力",
-        "date": "2026-08-19",
-        "status": "pending",
-        "source": "",
-        "sourceFile": "",
-        "createdAt": "2026-08-19T00:51:21.070Z",
+        "createdAt": "2026-08-19T08:33:41.659Z",
         "completedAt": "",
         "abandonedAt": "",
         "actualMinutes": 0,
@@ -115,7 +116,23 @@
         "status": "pending",
         "source": "",
         "sourceFile": "",
-        "createdAt": "2026-08-19T00:51:21.070Z",
+        "createdAt": "2026-08-19T08:33:41.659Z",
+        "completedAt": "",
+        "abandonedAt": "",
+        "actualMinutes": 0,
+        "summary": "",
+        "pomodoros": [],
+        "manualEntries": []
+      },
+      {
+        "id": "task:2026-08-19::英语听力",
+        "uid": "task:2026-08-19::英语听力",
+        "title": "英语听力",
+        "date": "2026-08-19",
+        "status": "pending",
+        "source": "",
+        "sourceFile": "",
+        "createdAt": "2026-08-19T08:33:41.658Z",
         "completedAt": "",
         "abandonedAt": "",
         "actualMinutes": 0,
