@@ -8,6 +8,122 @@
     "version": 1,
     "tasks": [
       {
+        "id": "task:2026-08-19::百词斩",
+        "uid": "task:2026-08-19::百词斩",
+        "title": "百词斩",
+        "date": "2026-08-19",
+        "status": "pending",
+        "source": "",
+        "sourceFile": "",
+        "createdAt": "2026-08-19T00:51:21.070Z",
+        "completedAt": "",
+        "abandonedAt": "",
+        "actualMinutes": 0,
+        "summary": "",
+        "pomodoros": [
+          {
+            "id": "task:2026-08-19::百词斩:pomodoro",
+            "startedAt": "2026-08-19T04:00:00.000Z",
+            "endedAt": "2026-08-19T04:00:00.000Z",
+            "minutes": 2
+          }
+        ],
+        "manualEntries": []
+      },
+      {
+        "id": "task:2026-08-19::多邻国",
+        "uid": "task:2026-08-19::多邻国",
+        "title": "多邻国",
+        "date": "2026-08-19",
+        "status": "pending",
+        "source": "",
+        "sourceFile": "",
+        "createdAt": "2026-08-19T00:51:21.070Z",
+        "completedAt": "",
+        "abandonedAt": "",
+        "actualMinutes": 0,
+        "summary": "",
+        "pomodoros": [
+          {
+            "id": "msze2in9-z1rm6z",
+            "startedAt": "2026-08-19T01:04:23.781Z",
+            "endedAt": "2026-08-19T01:34:24.492Z",
+            "minutes": 30
+          },
+          {
+            "id": "mszl6hya-im0w2u",
+            "startedAt": "2026-08-19T04:23:26.818Z",
+            "endedAt": "2026-08-19T05:02:34.314Z",
+            "minutes": 39
+          }
+        ],
+        "manualEntries": []
+      },
+      {
+        "id": "task:2026-08-19::看书",
+        "uid": "task:2026-08-19::看书",
+        "title": "看书",
+        "date": "2026-08-19",
+        "status": "pending",
+        "source": "",
+        "sourceFile": "",
+        "createdAt": "2026-08-19T00:51:21.070Z",
+        "completedAt": "",
+        "abandonedAt": "",
+        "actualMinutes": 0,
+        "summary": "",
+        "pomodoros": [],
+        "manualEntries": []
+      },
+      {
+        "id": "task:2026-08-19::日语新闻",
+        "uid": "task:2026-08-19::日语新闻",
+        "title": "日语新闻",
+        "date": "2026-08-19",
+        "status": "pending",
+        "source": "",
+        "sourceFile": "",
+        "createdAt": "2026-08-19T00:51:21.070Z",
+        "completedAt": "",
+        "abandonedAt": "",
+        "actualMinutes": 0,
+        "summary": "",
+        "pomodoros": [],
+        "manualEntries": []
+      },
+      {
+        "id": "task:2026-08-19::英语听力",
+        "uid": "task:2026-08-19::英语听力",
+        "title": "英语听力",
+        "date": "2026-08-19",
+        "status": "pending",
+        "source": "",
+        "sourceFile": "",
+        "createdAt": "2026-08-19T00:51:21.070Z",
+        "completedAt": "",
+        "abandonedAt": "",
+        "actualMinutes": 0,
+        "summary": "",
+        "pomodoros": [],
+        "manualEntries": []
+      },
+      {
+        "id": "task:2026-08-19::运动",
+        "uid": "task:2026-08-19::运动",
+        "title": "运动",
+        "date": "2026-08-19",
+        "status": "pending",
+        "source": "",
+        "sourceFile": "",
+        "createdAt": "2026-08-19T00:51:21.070Z",
+        "completedAt": "",
+        "abandonedAt": "",
+        "actualMinutes": 0,
+        "summary": "",
+        "pomodoros": [],
+        "manualEntries": []
+      },
+      {
         "id": "task:2026-08-18::多邻国",
         "uid": "task:2026-08-18::多邻国",
         "title": "多邻国",
@@ -15,7 +131,7 @@
         "status": "pending",
         "source": "",
         "sourceFile": "",
-        "createdAt": "2026-08-18T05:28:46.259Z",
+        "createdAt": "2026-08-18T06:38:18.355Z",
         "completedAt": "",
         "abandonedAt": "",
         "actualMinutes": 0,
@@ -31,7 +147,7 @@
         "status": "pending",
         "source": "",
         "sourceFile": "",
-        "createdAt": "2026-08-18T05:28:46.259Z",
+        "createdAt": "2026-08-18T06:38:18.355Z",
         "completedAt": "",
         "abandonedAt": "",
         "actualMinutes": 0,
@@ -47,7 +163,7 @@
         "status": "pending",
         "source": "",
         "sourceFile": "",
-        "createdAt": "2026-08-18T05:28:46.259Z",
+        "createdAt": "2026-08-18T06:38:18.355Z",
         "completedAt": "",
         "abandonedAt": "",
         "actualMinutes": 0,
@@ -60,16 +176,23 @@
         "uid": "task:2026-08-18::英语听力",
         "title": "英语听力",
         "date": "2026-08-18",
-        "status": "pending",
+        "status": "completed",
         "source": "",
         "sourceFile": "",
-        "createdAt": "2026-08-18T05:28:46.259Z",
+        "createdAt": "2026-08-18T06:38:18.355Z",
         "completedAt": "",
         "abandonedAt": "",
-        "actualMinutes": 0,
-        "summary": "",
+        "actualMinutes": 167,
+        "summary": "测试",
         "pomodoros": [],
-        "manualEntries": []
+        "manualEntries": [
+          {
+            "id": "task:2026-08-18::英语听力:manual",
+            "minutes": 167,
+            "recordedAt": "2026-08-18T04:00:00.000Z",
+            "note": "从日记恢复"
+          }
+        ]
       },
       {
         "id": "task:2026-08-18::运动",
@@ -79,7 +202,7 @@
         "status": "pending",
         "source": "",
         "sourceFile": "",
-        "createdAt": "2026-08-18T05:28:46.259Z",
+        "createdAt": "2026-08-18T06:38:18.355Z",
         "completedAt": "",
         "abandonedAt": "",
         "actualMinutes": 0,
